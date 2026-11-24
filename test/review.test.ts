@@ -34,9 +34,32 @@ describe('globMatch', () => {
   })
 })
 
+describe('globMatch performance', () => {
+  it('is linear-time on pathological patterns', () => {
+    const path = 'a'.repeat(200)
+    const t = performance.now()
+    expect(globMatch(path, 'a*a*a*a*a*a*a*a*a*a*ab')).toBe(false)
+    expect(globMatch(path + 'b', 'a*a*a*a*a*a*a*a*a*a*ab')).toBe(true)
+    expect(globMatch(path, '**/a**/a**/a**/b')).toBe(false)
+    expect(performance.now() - t).toBeLessThan(5)
+  })
+  it('keeps * and ? inside one segment and ** across segments', () => {
+    expect(globMatch('src/a/b.ts', 'src/**/b.ts')).toBe(true)
+    expect(globMatch('src/b.ts', 'src/**/b.ts')).toBe(true)
+    expect(globMatch('src/a/b.ts', 'src/*/b.ts')).toBe(true)
+    expect(globMatch('src/a/c/b.ts', 'src/*/b.ts')).toBe(false)
+    expect(globMatch('src/x', 'src?x')).toBe(false)
+  })
+})
+
 describe('validateGlob', () => {
   for (const bad of ['*', '**', '**/*', '', 'x'.repeat(201)]) it(`rejects ${bad.slice(0, 10) || '(empty)'}`, () => expect(validateGlob(bad)).toEqual(expect.any(String)))
+  for (const bad of ['*/**', '**/?*', '**/*.*', '**/**', 'a*b*c*d*e*f', '*/*/*/*/*']) {
+    it(`rejects broad or complex glob ${bad}`, () => expect(validateGlob(bad)).toEqual(expect.any(String)))
+  }
   it('accepts scoped globs', () => {
+    expect(validateGlob('src/**/*.ts')).toBeNull()
+    expect(validateGlob('**/*.test.ts')).toBeNull()
     expect(validateGlob('test/**')).toBeNull()
     expect(validateGlob('src/*.ts')).toBeNull()
   })
