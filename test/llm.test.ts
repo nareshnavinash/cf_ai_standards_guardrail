@@ -77,8 +77,18 @@ describe('checkFileWithLlm', () => {
     const run = vi.fn().mockResolvedValue({ response: good })
     const r = await checkFileWithLlm({ run } as any, file, RULES)
     expect(r).toEqual(expected)
-    expect(run).toHaveBeenCalledWith(LLM_MODEL, expect.objectContaining({ max_tokens: 2048, temperature: 0.1 }))
+    expect(run).toHaveBeenCalledWith(LLM_MODEL, expect.objectContaining({ max_tokens: 1024, temperature: 0.1 }))
     expect(run.mock.calls[0][1].response_format.type).toBe('json_schema')
+  })
+  it('reports neurons spent (reported usage, else chars/4), even for an unparseable reply', async () => {
+    const seen: number[] = []
+    const withUsage = { run: vi.fn().mockResolvedValue({ response: good, usage: { prompt_tokens: 2000, completion_tokens: 100 } }) }
+    await checkFileWithLlm(withUsage as any, file, RULES, (n) => seen.push(n))
+    expect(seen[0]).toBeCloseTo((2000 * 26668 + 100 * 204805) / 1e6)
+    const junk = { run: vi.fn().mockResolvedValue({ response: '{"findings":[{"rule' }) }
+    await expect(checkFileWithLlm(junk as any, file, RULES, (n) => seen.push(n))).rejects.toBeInstanceOf(LlmParseError)
+    expect(seen).toHaveLength(2)
+    expect(seen[1]).toBeGreaterThan(0)
   })
   it('rejects when ai.run rejects', async () => {
     const ai = { run: vi.fn().mockRejectedValue(new Error('quota')) }

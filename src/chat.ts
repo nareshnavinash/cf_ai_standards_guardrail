@@ -1,6 +1,7 @@
 import type { ChatTurn, ReviewResult } from './types'
 import { parseUnifiedDiff } from './diff'
 import { LLM_MODEL } from './checks/llm'
+import { promptChars, usageNeurons } from './budget'
 
 export const CHAT_SYSTEM_PROMPT = [
   'You are the assistant inside Standards Guardrail, a tool that reviewed a pull request against a short engineering standards catalog.',
@@ -42,6 +43,7 @@ export async function answerChat(
   history: ChatTurn[],
   question: string,
   code = '',
+  onUsage?: (neurons: number) => void,
 ): Promise<string> {
   const findings = review.findings
     .map((f) => `- ${f.ruleId} ${f.path}${f.line ? ':' + f.line : ''}: ${f.message}${f.suggestion ? ' Suggestion: ' + f.suggestion : ''}`)
@@ -60,7 +62,8 @@ export async function answerChat(
     { role: 'user', content: question },
   ]
   try {
-    const res: any = await (ai as any).run(LLM_MODEL, { messages, max_tokens: 700, temperature: 0.3 })
+    const res: any = await (ai as any).run(LLM_MODEL, { messages, max_tokens: 600, temperature: 0.3 })
+    onUsage?.(usageNeurons(res, promptChars(messages)))
     const text = typeof res === 'string' ? res : res?.response
     return typeof text === 'string' && text.trim() ? text.trim().slice(0, 4000) : CHAT_FALLBACK
   } catch {

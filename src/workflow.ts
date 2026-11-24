@@ -19,7 +19,7 @@ export interface ReviewDeps {
   ai: Ai
   cache: KVNamespace
   memory: MemoryLike
-  control?: { clearInflight(reviewId: string): Promise<void> }
+  control?: { clearInflight(reviewId: string): Promise<void>; recordUsage?(key: string, day: string, neurons: number): Promise<void> }
 }
 
 const BATCH = 4
@@ -75,12 +75,23 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
           batch.map(async (i) => {
             try {
               // Transport errors throw (and are retried by Workflows); an unparseable reply degrades without a retry.
-              const out = await step.do('llm-check:' + i, LLM_STEP, async () => {
+              const stepName = 'llm-check:' + i
+              const out = await step.do(stepName, LLM_STEP, async () => {
+                let neurons = 0
                 try {
-                  return { findings: await checkFileWithLlm(ai, load().files[i], RULES), degraded: false }
+                  return { findings: await checkFileWithLlm(ai, load().files[i], RULES, (n) => (neurons = n)), degraded: false }
                 } catch (e) {
                   if (e instanceof LlmParseError) return { findings: [] as Finding[], degraded: true }
                   throw e
+                } finally {
+                  // Idempotent per reviewId:stepName in Control, so retries and replays never double count.
+                  if (neurons > 0) {
+                    try {
+                      await deps.control?.recordUsage?.(`${params.reviewId}:${stepName}`, new Date().toISOString().slice(0, 10), neurons)
+                    } catch {
+                      // accounting is best effort; the review itself must not fail
+                    }
+                  }
                 }
               })
               return { found: out.findings, degraded: out.degraded, path: files[i].path }
@@ -152,7 +163,7 @@ export class ReviewWorkflow extends WorkflowEntrypoint<Env, ReviewParams> {
       ai: this.env.AI,
       cache: this.env.CACHE,
       memory: memory as unknown as MemoryLike,
-      control: this.env.CONTROL.get(this.env.CONTROL.idFromName('global')) as unknown as { clearInflight(id: string): Promise<void> },
+      control: this.env.CONTROL.get(this.env.CONTROL.idFromName('global')) as unknown as NonNullable<ReviewDeps['control']>,
     })
   }
 }

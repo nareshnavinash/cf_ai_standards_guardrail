@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { answerChat } from '../src/chat'
+import { CHAT_FALLBACK, answerChat } from '../src/chat'
 import type { ReviewResult } from '../src/types'
 
 const review = (title: string): ReviewResult => ({
@@ -21,5 +21,20 @@ describe('answerChat prompt hygiene', () => {
     const line = data.split('\n').find((l) => l.startsWith('PR title:'))!
     expect(line).not.toMatch(/[<>"`]/)
     expect(line.length).toBeLessThanOrEqual('PR title: '.length + 120)
+  })
+  it('uses max_tokens 600 and reports neurons spent', async () => {
+    const run = vi.fn(async () => ({ response: 'ok', usage: { prompt_tokens: 1000, completion_tokens: 50 } }))
+    const seen: number[] = []
+    expect(await answerChat({ run } as any, review('t'), [], 'hi', '', (n) => seen.push(n))).toBe('ok')
+    expect((run.mock.calls[0] as any)[1].max_tokens).toBe(600)
+    expect(seen[0]).toBeCloseTo((1000 * 26668 + 50 * 204805) / 1e6)
+  })
+  it('returns the fallback and reports nothing when the model throws', async () => {
+    const seen: number[] = []
+    const run = vi.fn(async () => {
+      throw new Error('x')
+    })
+    expect(await answerChat({ run } as any, review('t'), [], 'hi', '', (n) => seen.push(n))).toBe(CHAT_FALLBACK)
+    expect(seen).toEqual([])
   })
 })

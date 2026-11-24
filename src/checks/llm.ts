@@ -1,5 +1,6 @@
 import type { DiffFile, Finding, Rule } from '../types'
 import { RULES } from '../rules'
+import { promptChars, usageNeurons } from '../budget'
 
 export const LLM_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 const MAX_CODE_BYTES = 12 * 1024
@@ -110,17 +111,19 @@ const RESPONSE_FORMAT = {
 }
 
 /** Throws the transport error if the model call fails, or LlmParseError if the reply is not the expected JSON. */
-export async function checkFileWithLlm(ai: Ai, file: DiffFile, rules: Rule[]): Promise<Finding[]> {
+export async function checkFileWithLlm(ai: Ai, file: DiffFile, rules: Rule[], onUsage?: (neurons: number) => void): Promise<Finding[]> {
   const { system, user } = buildLlmPrompt(file, rules)
+  const messages = [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ]
   const raw = await (ai as any).run(LLM_MODEL, {
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
-    max_tokens: 2048,
+    messages,
+    max_tokens: 1024,
     temperature: 0.1,
     response_format: RESPONSE_FORMAT,
   })
+  onUsage?.(usageNeurons(raw, promptChars(messages))) // spent even if the reply turns out to be unusable
   if (!extractPayload(raw)) throw new LlmParseError('LLM returned an unparseable response')
   return parseLlmFindings(raw, file, rules)
 }

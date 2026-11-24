@@ -182,6 +182,27 @@ describe('runReview', () => {
     expect(control.clearInflight).toHaveBeenCalledWith('r1')
   })
 
+  it('records neuron usage per llm step, keyed reviewId:stepName, and survives a failing recorder', async () => {
+    const control = { clearInflight: vi.fn(async () => {}), recordUsage: vi.fn(async () => {}) }
+    const diff = diffOf(['src/a.ts', 'src/b.ts'])
+    await runReview(params(diff), { step: fakeStep(), ai: fakeAi().ai, cache: fakeKv() as any, memory: fakeMemory(), control })
+    const keys = control.recordUsage.mock.calls.map((c: any[]) => c[0]).sort()
+    expect(keys).toEqual(['r1:llm-check:0', 'r1:llm-check:1'])
+    const [, day, neurons] = control.recordUsage.mock.calls[0] as any[]
+    expect(day).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(neurons).toBeGreaterThan(0)
+    const broken = { clearInflight: vi.fn(async () => {}), recordUsage: vi.fn(async () => { throw new Error('do down') }) }
+    const r = await runReview(params(diff, { reviewId: 'r2' }), { step: fakeStep(), ai: fakeAi().ai, cache: fakeKv() as any, memory: fakeMemory(), control: broken })
+    expect(r.degradedFiles).toEqual([])
+  })
+  it('replayed llm steps are not re-run, so usage is not recorded twice', async () => {
+    const control = { clearInflight: vi.fn(async () => {}), recordUsage: vi.fn(async () => {}) }
+    const replay = new Map<string, unknown>()
+    const diff = diffOf(['src/a.ts'])
+    for (let i = 0; i < 2; i++) await runReview(params(diff), { step: fakeStep([], replay), ai: fakeAi().ai, cache: fakeKv() as any, memory: fakeMemory(), control })
+    expect(control.recordUsage).toHaveBeenCalledTimes(1)
+  })
+
   it('a deleted test file does not satisfy STD-004', async () => {
     const diff =
       addFiles([{ path: 'src/a.ts', lines: ['const a = 1'] }]) +
