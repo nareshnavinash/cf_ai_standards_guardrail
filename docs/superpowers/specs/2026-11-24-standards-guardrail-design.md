@@ -121,6 +121,13 @@ guardrail's exceptions must be deliberate and auditable.
 rule IDs and line numbers outside the catalog/added lines are dropped, and static rules never depend on
 the model.
 
+## Revision 3 notes
+
+- **Control Durable Object.** One global SQLite DO holds the review index, stored diffs, in-flight dedupe and the daily review/chat counters. Free-plan KV allows 1,000 writes/day, so KV now only caches results of full, non-degraded reviews. Counters are reserved atomically before a Workflow starts.
+- **Exceptions are visitor-scoped everywhere** (not just on the sample repo), so nobody can add exceptions to a real repo's memory for other people. Anonymous visitors are read-only.
+- **Chat has its own budget:** 10 questions per review, `DAILY_CHAT_TURNS` (60) per day, and no chat for static-only reviews.
+- **Cost controls:** test files are never sent to the LLM (static rules still apply); a reply that cannot be parsed degrades the file without a retry; private repos are refused; glob matching is linear-time and rejects broad globs.
+
 ## Left to the builder
 
 UI styling, exact regexes beyond the cases in the plan's tests, sample PR contents beyond the listed

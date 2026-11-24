@@ -12,6 +12,8 @@
 
 **Revision 2 (after critic review):** paid plan + GitHub token required; degraded mode instead of errored reviews; parallel LLM steps; glob escaping; parser edge cases; XSS/CSP; per-visitor sample exceptions; repo looked up server-side; eval route defined; PROMPTS export filters tightened.
 
+**Revision 3 (after review of Tasks 0-7):** a global `Control` Durable Object (SQLite, `idFromName('global')`, migration v2) now holds the review index (`rid -> repo, memoryKey, visitor`), the diff per review, in-flight dedupe (10-minute expiry, cleared in `persist`) and daily counters (`reserveReview`, `reserveChat`), because free-plan KV allows only 1,000 writes/day. KV keeps only the result cache (written only for full, non-degraded reviews). Exceptions are visitor-scoped for every repo (`<repo>#<visitorId>`, samples `sample:demo/sample-service#<visitorId>`, eval `<repo>#eval`); no valid `x-visitor-id` means read-only. New var `DAILY_CHAT_TURNS` (60), max 10 chat questions per review, chat disabled for `static-only` reviews. Test files are never sent to the LLM. Storage failures return 503. Rate limiter errors fail closed. Globs use a linear-time matcher (no regex from user input).
+
 ## Global Constraints
 
 - Local folder only: `/Users/nareshsekar/Documents/github/cf_ai_standards_guardrail`, local `git` commits, **no GitHub repo created or pushed until Naresh says so**. Worker name `cf-ai-standards-guardrail`.
@@ -19,10 +21,10 @@
 - **`GITHUB_TOKEN` secret required**: fine-grained PAT, "Public repositories (read-only)", no permissions, created by Naresh in the GitHub UI and entered only via `wrangler secret put` (never in chat). `GET /api/health` reports `{ ok, githubToken: boolean }`.
 - Model id `@cf/meta/llama-3.3-70b-instruct-fp8-fast`; `RULES_VERSION = "2026.11.1"`; rule IDs `STD-001`…`STD-007` exactly as in the spec table.
 - Limits: diff ≤ 100 KB (bytes); ≤ 10 files reviewed; ≤ 300 added lines per file; each line cut to 500 chars; ≤ 12 KB code per file sent to the LLM; chat message ≤ 2,000 chars; exception glob ≤ 200 chars, reason 3–500 chars, ≤ 25 exceptions per repo.
-- Rate limits per `cf-connecting-ip`: reviews 5/60 s (`REVIEW_LIMITER`), chat + exception writes 10/60 s (`CHAT_LIMITER`). Global: `DAILY_LLM_REVIEWS` (12) LLM reviews per UTC day (KV `budget:<yyyy-mm-dd>`); beyond that, reviews run static-only with `mode: 'static-only'`.
+- Rate limits per `cf-connecting-ip`: reviews 5/60 s (`REVIEW_LIMITER`), chat + exception writes and deletes 10/60 s (`CHAT_LIMITER`); a throwing limiter fails closed (429), a missing binding allows. Global: `DAILY_LLM_REVIEWS` (12) LLM reviews per UTC day, reserved atomically in the Control DO before the Workflow starts (cached diffs reserve nothing), and `DAILY_CHAT_TURNS` (60) chat answers per UTC day; beyond that, reviews run static-only with `mode: 'static-only'`.
 - Skipped files: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `*.min.js`, `*.min.css`, `*.map`, binaries (`png|jpg|jpeg|gif|webp|ico|svg|woff2?|ttf|pdf|zip`), `Binary files … differ`, and files with average added-line length > 1,000 chars ("minified").
-- Repo keys are lowercased `owner/repo`. Sample repo memory is keyed `demo/sample-service#<visitorId>` (visitorId: random UUID in the browser's localStorage, sent as `x-visitor-id`, validated as UUID; missing/invalid → shared read-only, exception writes rejected with 400).
-- Review ids match `^[A-Za-z0-9_][A-Za-z0-9_-]{0,99}$`; repo for an id is always looked up from KV `rid:<id>`, never trusted from the client.
+- Repo keys are lowercased `owner/repo`. Every memory key is visitor-scoped: `<repo>#<visitorId>`, samples `sample:demo/sample-service#<visitorId>`, eval `<repo>#eval` (visitorId: random UUID in the browser's localStorage, sent as `x-visitor-id`, validated as UUID; missing/invalid → `#anon`, read-only, exception writes rejected with 400; another visitor's review → 403).
+- Review ids match `^[A-Za-z0-9_][A-Za-z0-9_-]{0,99}$`; repo for an id is always looked up from the Control DO index, never trusted from the client.
 - Every API error is JSON `{ "error": string }` with a 4xx/5xx status. Internal error text is never passed through to users.
 - UI renders all diff/LLM/user text with `textContent` only; CSP `default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'`.
 - Anything time-based inside the Workflow (`createdAt`, budget day) is produced inside a `step.do` so it is stable on replay.
