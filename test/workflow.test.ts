@@ -218,6 +218,12 @@ describe('runReview', () => {
     const r = await runReview(params(diffOf(['src/a.ts']), { repo: 'eval/x', memoryKey: 'eval/x#eval' }), { step: fakeStep(), ai: fakeAi().ai, cache: fakeKv() as any, memory: fakeMemory(), control })
     expect(r.degradedReason).toBe('budget')
   })
+  it('transport error settles the reservation to 0', async () => {
+    const control = budgetControl()
+    const ai = { run: vi.fn(async () => { throw new Error('503') }) } as any
+    await runReview(params(diffOf(['src/a.ts'])), { step: fakeStep(), ai, cache: fakeKv() as any, memory: fakeMemory(), control })
+    expect(control.settleNeurons).toHaveBeenCalledWith('r1:llm-check:0', 0)
+  })
   it('a failing reservation call is retried by the step, not swallowed into an AI call', async () => {
     let n = 0
     const control = budgetControl(async () => {

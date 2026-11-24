@@ -140,10 +140,13 @@ export class ControlStore {
    * refused when it would push the day past `budget`.
    */
   reserveNeurons(day: string, key: string, amount: number, budget: number): boolean {
-    if (this.sql.exec(`SELECT 1 FROM reservations WHERE key = ?`, key).toArray().length) return true
+    const existing = this.sql.exec(`SELECT amount FROM reservations WHERE key = ?`, key).toArray()
+    // A row still holding neurons is idempotent; a zero-settled row (the earlier attempt refunded) is budget-checked and charged again.
+    if (existing.length && (existing[0].amount as number) > 0) return true
     const n = Math.max(0, Math.ceil(amount))
     if (this.neuronsSpent(day) + n > budget) return false
-    this.sql.exec(`INSERT INTO reservations (key, day, amount, created_at) VALUES (?, ?, ?, ?)`, key, day, n, this.now())
+    if (existing.length) this.sql.exec(`UPDATE reservations SET day = ?, amount = ? WHERE key = ?`, day, n, key)
+    else this.sql.exec(`INSERT INTO reservations (key, day, amount, created_at) VALUES (?, ?, ?, ?)`, key, day, n, this.now())
     this.bump(`neurons:${day}`, n)
     return true
   }

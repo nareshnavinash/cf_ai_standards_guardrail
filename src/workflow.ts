@@ -90,6 +90,7 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
               const key = `${params.reviewId}:${stepName}`
               const out = await step.do(stepName, LLM_STEP, async () => {
                 let neurons = 0
+                let settleToZero = false
                 // Reserve the worst case before the call (idempotent per key, so retries do not double charge); refused means no AI call.
                 const reserve = async (amount: number) =>
                   deps.control?.reserveNeurons
@@ -100,10 +101,11 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
                 } catch (e) {
                   if (e instanceof LlmParseError) return { findings: [] as Finding[], degraded: true, budget: false }
                   if (e instanceof LlmBudgetError) return { findings: [] as Finding[], degraded: true, budget: true }
+                  settleToZero = true // transport error: nothing was used, so release the reservation before the retry
                   throw e
                 } finally {
                   // Settle the reservation to the real usage; a failure leaves the (higher) reservation charged.
-                  if (neurons > 0) {
+                  if (settleToZero || neurons > 0) {
                     try {
                       await deps.control?.settleNeurons?.(key, neurons)
                     } catch {

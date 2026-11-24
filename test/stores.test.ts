@@ -157,6 +157,19 @@ describe('ControlStore', () => {
     c.settleNeurons('nope', 5)
     expect(c.neuronsSpent(DAY)).toBe(4300)
   })
+  it('a retry after a zero-settled reservation is budget-checked again', () => {
+    expect(c.reserveNeurons(DAY, 'a', 4000, 9000)).toBe(true)
+    c.settleNeurons('a', 0)
+    expect(c.neuronsSpent(DAY)).toBe(0)
+    expect(c.reserveNeurons(DAY, 'big', 8000, 9000)).toBe(true)
+    expect(c.reserveNeurons(DAY, 'a', 4000, 9000)).toBe(false) // 8000 + 4000 > 9000
+    expect(c.reserveNeurons(DAY, 'big', 8000, 9000)).toBe(true) // a non-zero row stays idempotent
+    c.settleNeurons('big', 0)
+    expect(c.reserveNeurons(DAY, 'a', 4000, 9000)).toBe(true)
+    expect(c.neuronsSpent(DAY)).toBe(4000)
+    expect(c.reserveNeurons(DAY, 'a', 4000, 9000)).toBe(true)
+    expect(c.neuronsSpent(DAY)).toBe(4000)
+  })
   it('per-IP cap on ALL review claims (cached and static-only too)', () => {
     for (let i = 0; i < 3; i++) expect(claim({ reviewId: 'r' + i, inflightKey: 'k' + i, needsBudget: false, ipTotalCap: 3 }).kind).toBe('claimed')
     expect(claim({ reviewId: 'x', inflightKey: 'kx', needsBudget: false, ipTotalCap: 3 })).toEqual({ kind: 'total-limit' })
