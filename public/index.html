@@ -1,3 +1,63 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Standards Guardrail</title></head>
-<body><h1>Standards Guardrail</h1></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Standards Guardrail</title>
+  <meta name="description" content="Reviews a GitHub pull request against an engineering standards catalog, explains violations, and remembers per-repo exceptions.">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Standards Guardrail</h1>
+    <p>Reviews PRs against your engineering standards. Deterministic checks first, an LLM only where judgment is needed.</p>
+  </header>
+
+  <main>
+    <section class="panel" aria-labelledby="start-h">
+      <h2 id="start-h" class="sr-only">Start a review</h2>
+      <div class="row">
+        <span class="label">Sample PRs</span>
+        <div id="samples" class="chips" role="group" aria-label="Sample pull requests"></div>
+      </div>
+      <form id="pr-form" class="row grow" autocomplete="off">
+        <label class="label" for="pr-url">or paste a public GitHub PR URL</label>
+        <input id="pr-url" type="text" inputmode="url" placeholder="https://github.com/owner/repo/pull/123">
+        <button id="review-btn" type="submit" class="primary">Review</button>
+      </form>
+      <p id="form-error" class="error" role="alert" hidden></p>
+    </section>
+
+    <div class="grid">
+      <section class="panel" aria-labelledby="findings-h">
+        <h2 id="findings-h">Findings</h2>
+        <p id="status" class="status" aria-live="polite">Pick a sample or paste a PR link to start.</p>
+        <div id="banners"></div>
+        <div id="findings"></div>
+        <details id="suppressed-wrap" hidden><summary id="suppressed-title"></summary><div id="suppressed"></div></details>
+        <details id="skipped-wrap" hidden><summary id="skipped-title"></summary><ul id="skipped"></ul></details>
+        <div id="rerun-wrap" hidden><button id="rerun-btn" type="button" class="primary">Re-run review</button></div>
+      </section>
+
+      <div class="side">
+        <section class="panel" aria-labelledby="chat-h">
+          <h2 id="chat-h">Chat</h2>
+          <div id="chat-log" class="chat-log" aria-live="polite"></div>
+          <form id="chat-form" class="row grow" autocomplete="off">
+            <input id="chat-input" type="text" maxlength="2000" placeholder="Ask about this review" aria-label="Ask about this review" disabled>
+            <button id="chat-btn" type="submit" disabled>Send</button>
+          </form>
+          <p id="chat-error" class="error" role="alert" hidden></p>
+        </section>
+        <section class="panel" aria-labelledby="ex-h">
+          <h2 id="ex-h">Exceptions for this repo</h2>
+          <ul id="exceptions" class="plain"><li class="muted">None yet.</li></ul>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <footer class="foot">Public demo. Results come from a small sample catalog (STD-001 to STD-007), not real company policy.</footer>
+  <script src="/app.js"></script>
+</body>
+</html>
