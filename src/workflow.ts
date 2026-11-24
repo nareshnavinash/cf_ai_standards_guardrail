@@ -3,9 +3,9 @@ import type { RepoMemory } from './memory'
 import type { DiffFile, Env, ExceptionRecord, Finding, ReviewMode, ReviewParams, ReviewResult } from './types'
 import { RULES, RULES_VERSION } from './rules'
 import { limitFiles, parseUnifiedDiff } from './diff'
-import { runStaticChecks } from './checks/static'
-import { checkFileWithLlm } from './checks/llm'
-import { applyExceptions, cacheKey, dedupeFindings, sortFindings } from './review'
+import { isTestPath, runStaticChecks, type PathInfo } from './checks/static'
+import { LlmParseError, checkFileWithLlm } from './checks/llm'
+import { applyExceptions, cacheKey, dedupeFindings, readCachedReview, sortFindings, type CachedReview } from './review'
 
 export interface StepLike {
   do<T>(name: string, opts: object | (() => Promise<T>), fn?: () => Promise<T>): Promise<T>
@@ -19,13 +19,7 @@ export interface ReviewDeps {
   ai: Ai
   cache: KVNamespace
   memory: MemoryLike
-}
-
-interface CachedReview {
-  findings: Finding[]
-  filesReviewed: number
-  skippedFiles: string[]
-  truncated: boolean
+  control?: { clearInflight(reviewId: string): Promise<void> }
 }
 
 const BATCH = 4
@@ -38,11 +32,11 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
 
   // Files are recomputed from the payload inside steps rather than returned from one,
   // so no step result carries the diff.
-  let memo: { files: DiffFile[]; skipped: string[]; truncated: boolean; allPaths: string[] } | null = null
+  let memo: { files: DiffFile[]; skipped: string[]; truncated: boolean; allPaths: PathInfo[] } | null = null
   const load = () => {
     if (!memo) {
       const parsed = parseUnifiedDiff(params.diff)
-      memo = { ...limitFiles(parsed), allPaths: parsed.map((f) => f.path) }
+      memo = { ...limitFiles(parsed), allPaths: parsed.map((f) => ({ path: f.path, status: f.status, added: f.added.length })) }
     }
     return memo
   }
@@ -53,7 +47,9 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
   })
 
   const key = await cacheKey(params.diff)
-  const cachedHit = await step.do('cache-lookup', async () => (await cache.get<CachedReview>(key, 'json')) ?? null)
+  // A static-only run must never be answered from a cached full result.
+  const cachedHit: CachedReview | null =
+    params.mode === 'static-only' ? null : await step.do('cache-lookup', async () => readCachedReview(cache, key))
 
   let raw: Finding[]
   let degradedFiles: string[] = []
@@ -71,22 +67,31 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
     const llmFindings: Finding[] = []
     if (params.mode === 'full') {
       const files = load().files
-      for (let start = 0; start < files.length; start += BATCH) {
-        const batch = files.slice(start, start + BATCH)
+      // Test files are only checked by the static rules (no LLM spend, no STD-005..007 noise).
+      const idxs = files.map((_, i) => i).filter((i) => !isTestPath(files[i].path))
+      for (let start = 0; start < idxs.length; start += BATCH) {
+        const batch = idxs.slice(start, start + BATCH)
         const results = await Promise.all(
-          batch.map(async (file, j) => {
-            const i = start + j
+          batch.map(async (i) => {
             try {
-              const found = await step.do('llm-check:' + i, LLM_STEP, async () => checkFileWithLlm(ai, load().files[i], RULES))
-              return { found, degraded: false as const }
+              // Transport errors throw (and are retried by Workflows); an unparseable reply degrades without a retry.
+              const out = await step.do('llm-check:' + i, LLM_STEP, async () => {
+                try {
+                  return { findings: await checkFileWithLlm(ai, load().files[i], RULES), degraded: false }
+                } catch (e) {
+                  if (e instanceof LlmParseError) return { findings: [] as Finding[], degraded: true }
+                  throw e
+                }
+              })
+              return { found: out.findings, degraded: out.degraded, path: files[i].path }
             } catch {
-              return { found: [] as Finding[], degraded: true as const, path: file.path }
+              return { found: [] as Finding[], degraded: true, path: files[i].path }
             }
           }),
         )
         for (const r of results) {
           llmFindings.push(...r.found)
-          if (r.degraded) degradedFiles.push((r as { path: string }).path)
+          if (r.degraded) degradedFiles.push(r.path)
         }
       }
     }
@@ -95,7 +100,11 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
     if (params.mode === 'full' && degradedFiles.length === 0) {
       await step.do('cache-store', async () => {
         const body: CachedReview = { findings: raw, ...info }
-        await cache.put(key, JSON.stringify(body), { expirationTtl: CACHE_TTL })
+        try {
+          await cache.put(key, JSON.stringify(body), { expirationTtl: CACHE_TTL })
+        } catch {
+          // KV write quota exhausted: the review is still valid, it just will not be cached.
+        }
         return true
       })
     }
@@ -125,6 +134,11 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
       createdAt: new Date().toISOString(),
     }
     await memory.saveReview(result)
+    try {
+      await deps.control?.clearInflight(params.reviewId)
+    } catch {
+      // the in-flight marker expires on its own
+    }
     return result
   })
 }
@@ -138,6 +152,7 @@ export class ReviewWorkflow extends WorkflowEntrypoint<Env, ReviewParams> {
       ai: this.env.AI,
       cache: this.env.CACHE,
       memory: memory as unknown as MemoryLike,
+      control: this.env.CONTROL.get(this.env.CONTROL.idFromName('global')) as unknown as { clearInflight(id: string): Promise<void> },
     })
   }
 }

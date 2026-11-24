@@ -56,7 +56,7 @@ async function api(path, opts = {}) {
 }
 const errText = (r) => (r.body && typeof r.body.error === 'string' ? r.body.error : 'Something went wrong. Please try again.')
 
-const state = { reviewId: null, running: false, lastBody: null, rules: [], timer: null, tick: null, result: null }
+const state = { reviewId: null, running: false, chatLocked: false, lastBody: null, rules: [], timer: null, tick: null, result: null }
 
 function setBusy(busy) {
   state.running = busy
@@ -73,8 +73,15 @@ function showFormError(msg) {
   el.hidden = !msg
 }
 function setChatEnabled(on) {
-  $('chat-input').disabled = !on
-  $('chat-btn').disabled = !on
+  const enabled = on && !state.chatLocked
+  $('chat-input').disabled = !enabled
+  $('chat-btn').disabled = !enabled
+}
+function lockChat(message) {
+  state.chatLocked = true
+  setChatEnabled(false)
+  $('chat-error').textContent = message
+  $('chat-error').hidden = false
 }
 
 function stopPolling() {
@@ -88,6 +95,8 @@ async function startReview(body) {
   if (state.running) return
   showFormError('')
   setBusy(true)
+  state.chatLocked = false
+  $('chat-error').hidden = true
   setChatEnabled(false)
   stopPolling()
   state.lastBody = body
@@ -255,6 +264,7 @@ function renderResult(res) {
   for (const p of res.skippedFiles) sk.append(h('li', { class: 'loc' }, p))
 
   $('rerun-wrap').hidden = false
+  if (res.mode === 'static-only') lockChat('Chat is unavailable for static-only reviews (the daily AI budget was used up).')
   setChatEnabled(true)
   loadExceptions()
 }
@@ -297,7 +307,9 @@ async function sendChat(ev) {
   const r = await api(`/api/reviews/${encodeURIComponent(state.reviewId)}/chat`, { method: 'POST', body: JSON.stringify({ message }) }).catch(() => ({ ok: false, body: null }))
   setChatEnabled(true)
   if (!r.ok) {
-    $('chat-error').textContent = errText(r)
+    const msg = errText(r)
+    if (r.status === 429 && /resumes tomorrow|for this review/.test(msg)) return lockChat(msg)
+    $('chat-error').textContent = msg
     $('chat-error').hidden = false
     return
   }
