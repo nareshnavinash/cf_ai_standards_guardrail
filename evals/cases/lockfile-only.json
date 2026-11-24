@@ -1,0 +1,7 @@
+{
+  "name": "lockfile-only",
+  "source": "synthetic",
+  "note": "Skipped file: a credential-looking string in a lockfile must not fire.",
+  "diff": "diff --git a/package-lock.json b/package-lock.json\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/package-lock.json\n@@ -0,0 +1,5 @@\n+{\n+  \"name\": \"x\",\n+  \"lockfileVersion\": 3,\n+  \"packages\": { \"\": { \"password\": \"aaaaaaaaaaaaaaaaaaaa\" } }\n+}\n",
+  "expected": []
+}

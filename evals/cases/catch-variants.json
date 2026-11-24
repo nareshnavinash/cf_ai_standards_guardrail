@@ -1,0 +1,9 @@
+{
+  "name": "catch-variants",
+  "source": "synthetic",
+  "note": "A catch that logs (fine) and a multi-line empty catch (flagged).",
+  "diff": "diff --git a/src/io.ts b/src/io.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/src/io.ts\n@@ -0,0 +1,5 @@\n+export function a() {\n+  try { read() } catch (e) { log(e) }\n+  try { read() } catch {\n+  }\n+}\ndiff --git a/test/io.test.ts b/test/io.test.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/test/io.test.ts\n@@ -0,0 +1,3 @@\n+import { x } from '../src/io'\n+\n+test('io', () => expect(x).toBeDefined())\n",
+  "expected": [
+    "STD-002"
+  ]
+}

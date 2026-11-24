@@ -1,0 +1,9 @@
+{
+  "name": "llm-fetch-no-timeout",
+  "source": "synthetic",
+  "llm": true,
+  "diff": "diff --git a/src/rates.ts b/src/rates.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/src/rates.ts\n@@ -0,0 +1,5 @@\n+export async function getRate(code: string) {\n+  const res = await fetch(`https://rates.example.com/v1/${code}`)\n+  const body = await res.json()\n+  return body.rate\n+}\ndiff --git a/test/rates.test.ts b/test/rates.test.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/test/rates.test.ts\n@@ -0,0 +1,3 @@\n+import { x } from '../src/rates'\n+\n+test('rates', () => expect(x).toBeDefined())\n",
+  "expected": [
+    "STD-005"
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "at": "2026-11-24T08:19:21.654Z",
+  "base": "https://cf-ai-standards-guardrail.nareshnavinash.workers.dev",
+  "rulesVersion": "2026.11.2",
+  "runs": [
+    {
+      "name": "llm-error-friendly",
+      "mode": "full",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 4.211,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "llm-error-leaks-stack",
+      "mode": "full",
+      "found": [
+        "STD-006"
+      ],
+      "degradedFiles": [],
+      "seconds": 5.945,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "llm-fetch-no-timeout",
+      "mode": "full",
+      "found": [
+        "STD-005"
+      ],
+      "degradedFiles": [],
+      "seconds": 12.906,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "llm-fetch-with-timeout",
+      "mode": "full",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 4.001,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "llm-log-pii",
+      "mode": "full",
+      "found": [
+        "STD-007"
+      ],
+      "degradedFiles": [],
+      "seconds": 9.797,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "llm-log-structured",
+      "mode": "full",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 3.97,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "real-fastify-7233",
+      "mode": "full",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 4.077,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "real-hono-5669",
+      "mode": "full",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 4.035,
+      "rulesVersion": "2026.11.2"
+    }
+  ]
+}

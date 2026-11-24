@@ -1,0 +1,10 @@
+{
+  "name": "sample-leaky-config",
+  "source": "synthetic",
+  "note": "Same diff as the in-app sample.",
+  "diff": "diff --git a/src/config.ts b/src/config.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/src/config.ts\n@@ -0,0 +1,10 @@\n+export const config = {\n+  region: 'eu-west-1',\n+  api_key: \"demo-0000-not-a-real-key\",\n+}\n+\n+export const awsAccessKey = 'AKIAIOSFODNN7EXAMPLE'\n+\n+export function onLogin(user: { email: string; token: string }) {\n+  console.log(`login ok for ${user.email} token=${user.token}`)\n+}\ndiff --git a/test/config.test.ts b/test/config.test.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/test/config.test.ts\n@@ -0,0 +1,3 @@\n+import { config } from '../src/config'\n+\n+test('has a region', () => expect(config.region).toBeTruthy())\n",
+  "expected": [
+    "STD-001",
+    "STD-007"
+  ]
+}

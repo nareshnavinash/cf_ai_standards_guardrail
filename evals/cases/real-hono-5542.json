@@ -1,0 +1,10 @@
+{
+  "name": "real-hono-5542",
+  "source": "real",
+  "origin": "https://github.com/honojs/hono/pull/5542",
+  "note": "Build plugin in vite.config.ts with no test in the PR.",
+  "diff": "diff --git a/vite.config.ts b/vite.config.ts\nindex 0ce27d359d..8533f54b17 100644\n--- a/vite.config.ts\n+++ b/vite.config.ts\n@@ -29,6 +29,33 @@ const removeDtsPrivateFieldsPlugin: TsdownPluginOption = {\n   },\n }\n \n+// JSDoc is kept in the .d.ts files, which editors read. Dropping it from the .js files makes the package smaller.\n+const removeJsDocPlugin: TsdownPluginOption = {\n+  name: 'hono:remove-jsdoc',\n+  async renderChunk(code, id) {\n+    if (!id.fileName.endsWith('.js')) {\n+      return\n+    }\n+\n+    const { comments } = await parse(id.fileName, code)\n+    const ms = new RolldownMagicString(code, { filename: id.fileName })\n+\n+    for (const comment of comments) {\n+      if (comment.type !== 'Block' || !comment.value.startsWith('*')) {\n+        continue\n+      }\n+      // Also remove the whitespace up to the next token, so no blank line is left behind\n+      let end = comment.end\n+      while (end < code.length && /\\s/.test(code[end])) {\n+        end++\n+      }\n+      ms.remove(comment.start, end)\n+    }\n+\n+    return ms.toString()\n+  },\n+}\n+\n const validatePackageExportsPlugin: TsdownPluginOption = {\n   name: 'hono:validate-package-exports',\n   async buildStart() {\n@@ -335,6 +362,11 @@ export default defineConfig({\n     format: ['esm'],\n     dts: true,\n     outExtensions: () => ({ js: '.js', dts: '.d.ts' }),\n-    plugins: [validatePackageExportsPlugin, removeDtsPrivateFieldsPlugin, appendExportEmptyToDts],\n+    plugins: [\n+      validatePackageExportsPlugin,\n+      removeJsDocPlugin,\n+      removeDtsPrivateFieldsPlugin,\n+      appendExportEmptyToDts,\n+    ],\n   },\n })\n",
+  "expected": [
+    "STD-004"
+  ]
+}

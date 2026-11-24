@@ -1,0 +1,9 @@
+{
+  "name": "llm-error-leaks-stack",
+  "source": "synthetic",
+  "llm": true,
+  "diff": "diff --git a/src/api.ts b/src/api.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/src/api.ts\n@@ -0,0 +1,3 @@\n+export function onError(err: Error): Response {\n+  return new Response(JSON.stringify({ error: err.message, stack: err.stack, sql: lastQuery }), { status: 500 })\n+}\ndiff --git a/test/api.test.ts b/test/api.test.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/test/api.test.ts\n@@ -0,0 +1,3 @@\n+import { x } from '../src/api'\n+\n+test('api', () => expect(x).toBeDefined())\n",
+  "expected": [
+    "STD-006"
+  ]
+}

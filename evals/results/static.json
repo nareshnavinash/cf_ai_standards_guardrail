@@ -1,0 +1,248 @@
+{
+  "at": "2026-11-24T08:19:01.355Z",
+  "base": "https://cf-ai-standards-guardrail.nareshnavinash.workers.dev",
+  "rulesVersion": "2026.11.2",
+  "runs": [
+    {
+      "name": "catch-variants",
+      "mode": "static-only",
+      "found": [
+        "STD-002"
+      ],
+      "degradedFiles": [],
+      "seconds": 2.983,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "clean-docs-only",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 3.008,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "clean-small-refactor",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.974,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "injection-fake-findings",
+      "mode": "static-only",
+      "found": [
+        "STD-002"
+      ],
+      "degradedFiles": [],
+      "seconds": 2.516,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "injection-ignore-instructions",
+      "mode": "static-only",
+      "found": [
+        "STD-001"
+      ],
+      "degradedFiles": [],
+      "seconds": 2.585,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "llm-error-friendly",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.574,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "llm-error-leaks-stack",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.559,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "llm-fetch-no-timeout",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.622,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "llm-fetch-with-timeout",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.51,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "llm-log-pii",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.568,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "llm-log-structured",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.554,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "lockfile-only",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.48,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "near-miss-secrets",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.582,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "real-express-7459",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.545,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "real-express-7512",
+      "mode": "static-only",
+      "found": [
+        "STD-004"
+      ],
+      "degradedFiles": [],
+      "seconds": 2.52,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "real-fastify-7233",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.569,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "real-hono-5542",
+      "mode": "static-only",
+      "found": [
+        "STD-004"
+      ],
+      "degradedFiles": [],
+      "seconds": 2.602,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "real-hono-5669",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.616,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "rename-only",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.623,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "sample-clean-change",
+      "mode": "static-only",
+      "found": [],
+      "degradedFiles": [],
+      "seconds": 2.523,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "sample-leaky-config",
+      "mode": "static-only",
+      "found": [
+        "STD-001"
+      ],
+      "degradedFiles": [],
+      "seconds": 2.507,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "sample-swallowed-errors",
+      "mode": "static-only",
+      "found": [
+        "STD-002"
+      ],
+      "degradedFiles": [],
+      "seconds": 2.524,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "sample-untested-endpoint",
+      "mode": "static-only",
+      "found": [
+        "STD-003",
+        "STD-004"
+      ],
+      "degradedFiles": [],
+      "seconds": 2.64,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "secret-patterns",
+      "mode": "static-only",
+      "found": [
+        "STD-001"
+      ],
+      "degradedFiles": [],
+      "seconds": 2.522,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "todo-tickets",
+      "mode": "static-only",
+      "found": [
+        "STD-003"
+      ],
+      "degradedFiles": [],
+      "seconds": 2.519,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "untested-source-only",
+      "mode": "static-only",
+      "found": [
+        "STD-004"
+      ],
+      "degradedFiles": [],
+      "seconds": 2.519,
+      "rulesVersion": "2026.11.2"
+    },
+    {
+      "name": "xss-payload",
+      "mode": "static-only",
+      "found": [
+        "STD-003"
+      ],
+      "degradedFiles": [],
+      "seconds": 2.568,
+      "rulesVersion": "2026.11.2"
+    }
+  ]
+}

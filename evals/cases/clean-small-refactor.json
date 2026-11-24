@@ -1,0 +1,6 @@
+{
+  "name": "clean-small-refactor",
+  "source": "synthetic",
+  "diff": "diff --git a/src/total.ts b/src/total.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/src/total.ts\n@@ -0,0 +1,3 @@\n+export function total(items: { price: number }[]): number {\n+  return items.reduce((sum, i) => sum + i.price, 0)\n+}\ndiff --git a/test/total.test.ts b/test/total.test.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/test/total.test.ts\n@@ -0,0 +1,3 @@\n+import { total } from '../src/total'\n+\n+test('sums', () => expect(total([{ price: 2 }, { price: 3 }])).toBe(5))\n",
+  "expected": []
+}

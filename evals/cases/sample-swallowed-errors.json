@@ -1,0 +1,10 @@
+{
+  "name": "sample-swallowed-errors",
+  "source": "synthetic",
+  "note": "Same diff as the in-app sample.",
+  "diff": "diff --git a/src/payments.ts b/src/payments.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/src/payments.ts\n@@ -0,0 +1,9 @@\n+export async function charge(order: Order) {\n+  try {\n+    await gateway.charge(order)\n+  } catch (e) {}\n+}\n+\n+export function toResponse(err: Error) {\n+  return new Response(`Payment failed: ${err.stack}`, { status: 500 })\n+}\ndiff --git a/test/payments.test.ts b/test/payments.test.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/test/payments.test.ts\n@@ -0,0 +1,3 @@\n+import { charge } from '../src/payments'\n+\n+test('exports charge', () => expect(charge).toBeDefined())\n",
+  "expected": [
+    "STD-002",
+    "STD-006"
+  ]
+}

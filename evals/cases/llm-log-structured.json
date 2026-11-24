@@ -1,0 +1,7 @@
+{
+  "name": "llm-log-structured",
+  "source": "synthetic",
+  "llm": true,
+  "diff": "diff --git a/src/signup.ts b/src/signup.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/src/signup.ts\n@@ -0,0 +1,3 @@\n+export function onSignup(user: { id: string }) {\n+  logger.info({ event: 'signup', userId: user.id })\n+}\ndiff --git a/test/signup.test.ts b/test/signup.test.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/test/signup.test.ts\n@@ -0,0 +1,3 @@\n+import { x } from '../src/signup'\n+\n+test('signup', () => expect(x).toBeDefined())\n",
+  "expected": []
+}

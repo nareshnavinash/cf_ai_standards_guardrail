@@ -1,0 +1,6 @@
+{
+  "name": "rename-only",
+  "source": "synthetic",
+  "diff": "diff --git a/src/old.ts b/src/new.ts\nsimilarity index 100%\nrename from src/old.ts\nrename to src/new.ts\n",
+  "expected": []
+}

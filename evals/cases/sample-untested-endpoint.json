@@ -1,0 +1,11 @@
+{
+  "name": "sample-untested-endpoint",
+  "source": "synthetic",
+  "note": "Same diff as the in-app sample.",
+  "diff": "diff --git a/src/handlers/weather.ts b/src/handlers/weather.ts\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/src/handlers/weather.ts\n@@ -0,0 +1,5 @@\n+// TODO cache this response\n+export async function weather(city: string) {\n+  const res = await fetch(`https://api.example.com/weather?city=${city}`)\n+  return res.json()\n+}\n",
+  "expected": [
+    "STD-003",
+    "STD-004",
+    "STD-005"
+  ]
+}
