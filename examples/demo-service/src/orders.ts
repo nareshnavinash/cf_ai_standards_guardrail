@@ -23,4 +23,12 @@ export class OrderStore {
       .filter((o) => o.customerId === customerId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   }
+
+  /** One page of a customer's orders, newest first. `page` starts at 1. */
+  page(customerId: string, page: number, pageSize = 20): { items: Order[]; total: number; page: number } {
+    if (!Number.isInteger(page) || page < 1) throw new RangeError('page must be a positive integer')
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new RangeError('pageSize must be between 1 and 100')
+    const all = this.forCustomer(customerId)
+    return { items: all.slice((page - 1) * pageSize, page * pageSize), total: all.length, page }
+  }
 }
