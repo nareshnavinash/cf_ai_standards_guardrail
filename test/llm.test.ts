@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RULES } from '../src/rules'
-import { LLM_MODEL, PROMPT_HASH, buildLlmPrompt, checkFileWithLlm, parseLlmFindings } from '../src/checks/llm'
+import { LLM_MODEL, LlmParseError, PROMPT_HASH, buildLlmPrompt, checkFileWithLlm, parseLlmFindings } from '../src/checks/llm'
 import type { DiffFile } from '../src/types'
 
 const file: DiffFile = {
@@ -77,15 +77,16 @@ describe('checkFileWithLlm', () => {
     const run = vi.fn().mockResolvedValue({ response: good })
     const r = await checkFileWithLlm({ run } as any, file, RULES)
     expect(r).toEqual(expected)
-    expect(run).toHaveBeenCalledWith(LLM_MODEL, expect.objectContaining({ max_tokens: 1500, temperature: 0.1 }))
+    expect(run).toHaveBeenCalledWith(LLM_MODEL, expect.objectContaining({ max_tokens: 2048, temperature: 0.1 }))
     expect(run.mock.calls[0][1].response_format.type).toBe('json_schema')
   })
   it('rejects when ai.run rejects', async () => {
     const ai = { run: vi.fn().mockRejectedValue(new Error('quota')) }
     await expect(checkFileWithLlm(ai as any, file, RULES)).rejects.toThrow('quota')
+    await expect(checkFileWithLlm(ai as any, file, RULES)).rejects.not.toBeInstanceOf(LlmParseError)
   })
   it('rejects on an unparseable model response so the workflow can degrade', async () => {
     const ai = { run: vi.fn().mockResolvedValue({ response: '{"findings":[{"rule' }) }
-    await expect(checkFileWithLlm(ai as any, file, RULES)).rejects.toThrow()
+    await expect(checkFileWithLlm(ai as any, file, RULES)).rejects.toBeInstanceOf(LlmParseError)
   })
 })

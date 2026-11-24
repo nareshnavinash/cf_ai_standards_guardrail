@@ -5,6 +5,9 @@ export const LLM_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 const MAX_CODE_BYTES = 12 * 1024
 const MAX_TEXT = 500
 
+/** The model answered, but not with usable JSON. Retrying would just spend neurons again. */
+export class LlmParseError extends Error {}
+
 export function buildSystemPrompt(rules: Rule[]): string {
   const llmRules = rules.filter((r) => r.kind === 'llm')
   const list = llmRules.map((r) => `- ${r.id} (${r.title}): ${r.guidance}`).join('\n')
@@ -106,7 +109,7 @@ const RESPONSE_FORMAT = {
   },
 }
 
-/** Throws if the model call fails or returns something that is not the expected JSON; the Workflow handles retries and degradation. */
+/** Throws the transport error if the model call fails, or LlmParseError if the reply is not the expected JSON. */
 export async function checkFileWithLlm(ai: Ai, file: DiffFile, rules: Rule[]): Promise<Finding[]> {
   const { system, user } = buildLlmPrompt(file, rules)
   const raw = await (ai as any).run(LLM_MODEL, {
@@ -114,10 +117,10 @@ export async function checkFileWithLlm(ai: Ai, file: DiffFile, rules: Rule[]): P
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    max_tokens: 1500,
+    max_tokens: 2048,
     temperature: 0.1,
     response_format: RESPONSE_FORMAT,
   })
-  if (!extractPayload(raw)) throw new Error('LLM returned an unparseable response')
+  if (!extractPayload(raw)) throw new LlmParseError('LLM returned an unparseable response')
   return parseLlmFindings(raw, file, rules)
 }

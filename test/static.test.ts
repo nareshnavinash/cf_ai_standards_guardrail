@@ -71,6 +71,13 @@ describe('STD-004', () => {
     expect(runStaticChecks([file('src/a.ts', ['const a = 1'])], ['src/a.ts', 'src/a.test.ts'])).toEqual([])
     expect(runStaticChecks([file('src/a.ts', ['const a = 1'])], ['src/a.ts', 'tests/x.py'])).toEqual([])
   })
+  it('does not count deleted or empty test files as tests', () => {
+    const src = [file('src/a.ts', ['const a = 1'])]
+    const info = (path: string, status: DiffFile['status'], added: number) => ({ path, status, added })
+    expect(runStaticChecks(src, [info('src/a.ts', 'modified', 1), info('test/a.test.ts', 'deleted', 0)])).toHaveLength(1)
+    expect(runStaticChecks(src, [info('src/a.ts', 'modified', 1), info('test/a.test.ts', 'renamed', 0)])).toHaveLength(1)
+    expect(runStaticChecks(src, [info('src/a.ts', 'modified', 1), info('test/a.test.ts', 'added', 3)])).toEqual([])
+  })
   it('ignores docs, config, lock and test files', () => {
     for (const p of ['README.md', 'package.json', 'ci.yml', 'x.lock', 'docs/guide.ts', 'src/a.test.ts']) {
       expect(runStaticChecks([file(p, ['x'])], [p])).toEqual([])

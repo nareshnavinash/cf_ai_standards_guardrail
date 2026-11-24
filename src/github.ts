@@ -64,12 +64,13 @@ export async function fetchPrDiff(
 
   const metaRes = await get('application/vnd.github+json')
   if (!metaRes.ok) throw mapStatus(metaRes, false)
-  let meta: { title?: unknown; changed_files?: unknown }
+  let meta: { title?: unknown; changed_files?: unknown; private?: unknown; base?: { repo?: { private?: unknown } } }
   try {
     meta = (await metaRes.json()) as typeof meta
   } catch {
     throw new HttpError(502, 'GitHub returned an unexpected response')
   }
+  if (meta.private === true || meta.base?.repo?.private === true) throw new HttpError(404, 'PR not found, or the repo is private')
   const changed = typeof meta.changed_files === 'number' ? meta.changed_files : 0
   if (changed === 0) throw new HttpError(422, 'This PR has no changed files')
   if (changed > MAX_CHANGED_FILES) throw new HttpError(413, `This PR changes more than ${MAX_CHANGED_FILES} files; it is too large to review`)

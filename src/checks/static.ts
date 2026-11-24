@@ -26,9 +26,18 @@ function isSourcePath(path: string): boolean {
   return CODE_EXT.test(path) && !isTestPath(path) && !/(^|\/)docs\//.test(path)
 }
 
-export function runStaticChecks(files: DiffFile[], allPaths: string[]): Finding[] {
+export interface PathInfo {
+  path: string
+  status: DiffFile['status']
+  added: number
+}
+
+/** `allPaths` lists every file in the PR before limiting. Plain strings count as present; PathInfo entries only count as tests if not deleted and with added lines. */
+export function runStaticChecks(files: DiffFile[], allPaths: (string | PathInfo)[]): Finding[] {
   const out: Finding[] = []
-  const anyTest = allPaths.some(isTestPath)
+  const anyTest = allPaths.some((p) =>
+    typeof p === 'string' ? isTestPath(p) : isTestPath(p.path) && p.status !== 'deleted' && p.added > 0,
+  )
 
   for (const f of files) {
     if (f.status === 'deleted' || f.status === 'binary') continue

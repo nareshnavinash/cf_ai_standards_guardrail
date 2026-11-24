@@ -95,6 +95,14 @@ describe('fetchPrDiff', () => {
     await rejects(fetchPrDiff(URL_OK, 't', mockFetch({ body: { title: 't', changed_files: 0 } }, DIFF) as any), 422)
     await rejects(fetchPrDiff(URL_OK, 't', mockFetch({ body: { title: 't', changed_files: 301 } }, DIFF) as any), 413)
   })
+  it('treats private repos as not found (never reads the diff)', async () => {
+    const f1 = mockFetch({ body: { title: 't', changed_files: 1, private: true } }, DIFF)
+    await rejects(fetchPrDiff(URL_OK, 't', f1 as any), 404, 'PR not found, or the repo is private')
+    expect(f1).toHaveBeenCalledTimes(1)
+    const f2 = mockFetch({ body: { title: 't', changed_files: 1, base: { repo: { private: true } } } }, DIFF)
+    await rejects(fetchPrDiff(URL_OK, 't', f2 as any), 404, 'PR not found, or the repo is private')
+    expect(f2).toHaveBeenCalledTimes(1)
+  })
   it('413 on content-length over 100 KB without reading the body', async () => {
     const f = vi.fn(async (_u: string, init?: RequestInit) => {
       if ((init!.headers as Record<string, string>).Accept.includes('diff')) {
