@@ -1,0 +1,10 @@
+diff --git a/src/q.sql b/src/q.sql
+index 111..222 100644
+--- a/src/q.sql
++++ b/src/q.sql
+@@ -1,3 +1,4 @@
+ select 1
+--- comment
++select 2
+ select 3
++select 4

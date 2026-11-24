@@ -1,0 +1,11 @@
+diff --git a/src/n.txt b/src/n.txt
+index 111..222 100644
+--- a/src/n.txt
++++ b/src/n.txt
+@@ -1,2 +1,3 @@
+ one
+-two
+\ No newline at end of file
++two
++three
+\ No newline at end of file
