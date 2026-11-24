@@ -142,3 +142,11 @@ violations, eval case wording.
 - **Retention:** Control drops stored diffs after 3 days and index rows after 30, pruning at most hourly; `created_at` is indexed.
 - **Public check:** a PR is reviewed only if its base repo reports `private: false`. Globs are capped at 100 chars.
 - **UI:** visitor id falls back localStorage, sessionStorage, memory ("Exceptions last only for this tab"); chat locks on 409/410 and cap-style 429s.
+
+## Revision 5 notes
+
+- **Reserve, then spend:** every AI call reserves its worst-case neurons in Control first (idempotent per key) and settles to actual usage afterwards; a refused reservation means no call. Eval runs are included.
+- **In-flight race:** a marker < 90 s old is alive; release only on `errored`/`terminated` or not-found after that, other Workflow errors are 503. 410 only for an explicit not-found.
+- **Abuse guard:** `IP_DAILY_REVIEWS_TOTAL` (30) caps all review POSTs per IP per day; static-only reviews store no diff; a cache-hit admission that misses the cache at run time runs static-only.
+- **Error codes:** API errors carry `code`; the UI locks chat by code only. The create response carries `notice`/`noticeCode` for static-only fallbacks.
+
