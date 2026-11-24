@@ -621,6 +621,18 @@ describe('chat', () => {
     expect(await r.json()).toEqual({ error: "You've reached today's chat limit", code: 'ip_limit' })
     expect((await call(t.env, 'POST', `/api/reviews/${id2}/chat`, { message: 'q' }, { 'cf-connecting-ip': '198.51.100.8' })).status).toBe(200)
   })
+  it('a fallback chat reply is not stored in history', async () => {
+    const id = await startSample()
+    await complete(id)
+    const ok = t.env.AI.run
+    t.env.AI.run = vi.fn(async () => { throw new Error('boom') })
+    const r = (await (await chat(id, 'broken question')).json()) as any
+    expect(r.reply).toMatch(/could not answer/)
+    expect(await t.mem(SAMPLE_KEY(VISITOR)).getChat(id, 20)).toEqual([])
+    t.env.AI.run = ok
+    const good = (await (await chat(id, 'real question')).json()) as any
+    expect(good.history.map((h: any) => h.content)).toEqual(['real question', good.reply])
+  })
   it('a fallback reply (AI failed) refunds the per-review, daily and per-IP slots', async () => {
     t = makeEnv({ DAILY_CHAT_TURNS: '1', IP_DAILY_CHATS: '1' })
     const ip = { 'cf-connecting-ip': '198.51.100.7' }

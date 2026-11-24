@@ -396,8 +396,9 @@ async function reviewRoute(req: Request, env: Env, id: string, sub: string | und
     ]
     let full: ChatTurn[]
     try {
-      await memory.appendChat(id, turns)
-      full = await memory.getChat(id, 20)
+      // A failed reply is not part of the conversation: keep it (and the question it answers) out of the stored history.
+      if (reply !== CHAT_FALLBACK) await memory.appendChat(id, turns)
+      full = reply === CHAT_FALLBACK ? [...history, ...turns].slice(-20) : await memory.getChat(id, 20)
     } catch (e) {
       console.error('chat history save failed', e) // the AI reply was already paid for: still return it
       full = [...history, ...turns].slice(-20)
