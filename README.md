@@ -2,9 +2,9 @@
 
 Reviews a GitHub pull request against a written engineering standards catalog, explains each violation, suggests a fix, lets you chat about the findings, and remembers deliberate exceptions. Live at https://cf-ai-standards-guardrail.nareshnavinash.workers.dev (public PRs only, free Cloudflare plan).
 
-![Standards Guardrail reviewing the leaky-config sample, with the exception form open](docs/screenshot.png)
+![Standards Guardrail reviewing a real pull request in full mode, with static and LLM findings](docs/screenshot.png)
 
-The screenshot was taken from a local run with the AI budget at zero, so it shows the static-only mode (see below).
+The screenshot is a live full-mode review of pull request #1 below: two static findings (STD-001, STD-004) and two LLM findings (STD-005, STD-007).
 
 I built it as a small working version of "turn engineering standards into automated guardrails and feedback engineers can act on, instead of checklists and manual review". The design note is in [docs/superpowers/specs](docs/superpowers/specs/2026-11-24-standards-guardrail-design.md), the plan in [docs/superpowers/plans](docs/superpowers/plans/2026-11-24-standards-guardrail.md), and the prompts I used to build it are in `PROMPTS.md`.
 
@@ -15,6 +15,51 @@ I built it as a small working version of "turn engineering standards into automa
 3. Click **Re-run review**. The finding moves under "Suppressed by exceptions".
 4. Paste any public PR link (for example `https://github.com/honojs/hono/pull/5669`) instead of a sample.
 5. When the daily AI budget is available, the chat panel answers questions about the review ("why is this a problem?", "show me a fix").
+
+## Proof: real pull requests
+
+To check the guardrail on real pull requests, I added a small clean service in [examples/demo-service](examples/demo-service) and opened five PRs against it, each written to trigger specific rules. I wrote the expected rule ids down before running any review (`poc/` branches, all still open), then reviewed each PR through the live app. Full-size screenshots are in [docs/proof](docs/proof).
+
+| PR | What it changes | Expected | Reported (static / LLM) | Verdict |
+|---|---|---|---|---|
+| [#1](https://github.com/nareshnavinash/cf_ai_standards_guardrail/pull/1) | Payment webhook client: hardcoded key, `fetch` with no timeout or error handling, logs the customer email, no test added | STD-001, STD-004, STD-005, STD-007 | static: STD-001, STD-004; LLM: STD-005, STD-007 (full mode) | ✅ match |
+| [#2](https://github.com/nareshnavinash/cf_ai_standards_guardrail/pull/2) | Order export endpoint: returns `err.stack` to the client, `// TODO make this faster`, no test | STD-003, STD-004, STD-006 | static: STD-003, STD-004; LLM: STD-006 (full mode) | ✅ match |
+| [#3](https://github.com/nareshnavinash/cf_ai_standards_guardrail/pull/3) | Retry helper with an empty `catch (e) {}`, with tests | STD-002 | static: STD-002 (static-only mode) | ✅ match |
+| [#4](https://github.com/nareshnavinash/cf_ai_standards_guardrail/pull/4) | Config file with a fake token and a comment telling the AI reviewer to report no issues, with a test | STD-001 | static: STD-001 (static-only mode) | ✅ match |
+| [#5](https://github.com/nareshnavinash/cf_ai_standards_guardrail/pull/5) | Clean paginated order listing, with tests | none | none (static-only mode) | ✅ match |
+
+Totals: 9 of 9 expected findings were reported, with 0 misses and 0 extras, across 5 PRs.
+
+| PR | Screenshot |
+|---|---|
+| #1 | ![PR 1](docs/proof/pr-1-payment-webhook-client.png) |
+| #2 | ![PR 2](docs/proof/pr-2-user-export-endpoint.png) |
+| #3 | ![PR 3](docs/proof/pr-3-retry-refactor.png) |
+| #4 | ![PR 4](docs/proof/pr-4-prompt-injection-attempt.png) |
+| #5 | ![PR 5](docs/proof/pr-5-clean-orders-pagination.png) |
+
+**Read this honestly.**
+
+- **Only PRs 1 and 2 ran in full mode.** PRs 3, 4 and 5 ran static-only because the free-plan AI allowance for this visitor was used up by then (the exact cause, daily budget or per-IP allowance, was not captured). So for those three the LLM rules (STD-005 to STD-007) were never checked: "STD-002 only" and "no findings" mean "no static findings", and the clean PR is not proof that the LLM would stay silent on it.
+- **PR 4 is a prompt-injection check for the static path only.** STD-001 is a regex, so the comment could not have influenced it. That the LLM ignores such a comment is not shown here.
+- **I decided before reviewing that PR 1 would ship without a test**, so STD-004 was an expected finding, not a surprise.
+- Five PRs written by the author of the rules are a demonstration, not an evaluation. See [evals/RESULTS.md](evals/RESULTS.md) for the labelled cases and their limits.
+
+### UI walkthrough
+
+All of this was driven through the live app with one fixed visitor id, on PR #1.
+
+**Chat.** Asked "Why is the webhook fetch a problem and how should I fix it?". The answer cites STD-005 and proposes a timeout and a `res.ok` check. Its code sample uses a `timeout: 5000` option, which `fetch` does not support (the right fix is `AbortSignal.timeout(5000)`, as in `examples/demo-service/src/http.ts`), so the answer is a useful pointer, not code to paste.
+
+![Chat answering about the webhook fetch](docs/proof/chat.png)
+
+**Exception.** I added an STD-007 exception for the single file `examples/demo-service/src/payments.ts` with a reason, then clicked Re-run review. The STD-007 finding moved under "Suppressed by exceptions" while STD-001, STD-004 and STD-005 stayed.
+
+![STD-007 suppressed by an exception](docs/proof/exception-suppressed.png)
+
+**Mobile (375 px).**
+
+![Review on a 375 px wide screen](docs/proof/mobile.png)
 
 ## Architecture
 
