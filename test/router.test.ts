@@ -209,7 +209,7 @@ describe('POST /api/reviews with a PR url', () => {
       'fetch',
       vi.fn(async (_u: string, init?: RequestInit) => {
         const accept = (init!.headers as Record<string, string>).Accept
-        return accept.includes('diff') ? new Response(SAMPLES[3].diff) : new Response(JSON.stringify({ title: 'My PR', changed_files: 2 }))
+        return accept.includes('diff') ? new Response(SAMPLES[3].diff) : new Response(JSON.stringify({ title: 'My PR', changed_files: 2, base: { repo: { private: false } } }))
       }),
     )
   it('fetches the diff server-side; memory is scoped to repo and visitor', async () => {
@@ -433,7 +433,7 @@ describe('exceptions', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_u: string, init?: RequestInit) =>
-        (init!.headers as Record<string, string>).Accept.includes('diff') ? new Response(SAMPLES[3].diff) : new Response(JSON.stringify({ title: 'T', changed_files: 2 })),
+        (init!.headers as Record<string, string>).Accept.includes('diff') ? new Response(SAMPLES[3].diff) : new Response(JSON.stringify({ title: 'T', changed_files: 2, base: { repo: { private: false } } })),
       ),
     )
     try {

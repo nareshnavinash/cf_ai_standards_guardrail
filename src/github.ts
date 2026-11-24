@@ -70,7 +70,9 @@ export async function fetchPrDiff(
   } catch {
     throw new HttpError(502, 'GitHub returned an unexpected response')
   }
-  if (meta.private === true || meta.base?.repo?.private === true) throw new HttpError(404, 'PR not found, or the repo is private')
+  // Fail closed: only an explicit `private: false` on the base repo counts as public. (The PR object has no top-level
+  // `private`; if one is ever present it must not be true.)
+  if (meta.private === true || meta.base?.repo?.private !== false) throw new HttpError(404, 'PR not found, or the repo is private')
   const changed = typeof meta.changed_files === 'number' ? meta.changed_files : 0
   if (changed === 0) throw new HttpError(422, 'This PR has no changed files')
   if (changed > MAX_CHANGED_FILES) throw new HttpError(413, `This PR changes more than ${MAX_CHANGED_FILES} files; it is too large to review`)

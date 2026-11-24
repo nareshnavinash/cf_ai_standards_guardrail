@@ -34,14 +34,18 @@ export async function readCachedReview(kv: KVNamespace, key: string): Promise<Ca
   }
 }
 
-const MAX_GLOB = 200
+const MAX_GLOB = 100
 const MAX_WILDCARDS = 4
 const CATCH_ALL = /^(?:\*\*\/)*\*{1,2}$/
 const PROBES = ['a', 'a/b.ts', 'x/y/z.js']
 
 type Token = { t: 'lit'; c: string } | { t: 'q' } | { t: 's1' } | { t: 's2' } | { t: 'ds' }
 
+/** Test hook: how many globs have been tokenized. */
+export const globStats = { compiles: 0 }
+
 function tokenize(glob: string): Token[] {
+  globStats.compiles++
   const out: Token[] = []
   for (let i = 0; i < glob.length; ) {
     if (glob.startsWith('**/', i)) {
@@ -69,7 +73,10 @@ function tokenize(glob: string): Token[] {
  * `**` crosses `/`; `**` followed by `/` also matches zero directories; `*` and `?` never cross `/`.
  */
 export function globMatch(path: string, glob: string): boolean {
-  const toks = tokenize(glob)
+  return matchTokens(path, tokenize(glob))
+}
+
+function matchTokens(path: string, toks: Token[]): boolean {
   const n = path.length
   let next = new Array<boolean>(n + 1).fill(false)
   next[n] = true // dp for j = toks.length: only the empty remainder matches
@@ -119,8 +126,10 @@ export function applyExceptions(
 ): { kept: Finding[]; suppressed: Finding[] } {
   const kept: Finding[] = []
   const suppressed: Finding[] = []
+  // Compile every exception once, not once per finding.
+  const compiled = exceptions.map((e) => ({ ruleId: e.ruleId, toks: tokenize(e.pathGlob) }))
   for (const f of findings) {
-    const hit = exceptions.some((e) => e.ruleId === f.ruleId && globMatch(f.path, e.pathGlob))
+    const hit = compiled.some((e) => e.ruleId === f.ruleId && matchTokens(f.path, e.toks))
     ;(hit ? suppressed : kept).push(f)
   }
   return { kept, suppressed }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyExceptions, cacheKey, dedupeFindings, globMatch, sortFindings, validateGlob } from '../src/review'
+import { applyExceptions, cacheKey, dedupeFindings, globMatch, globStats, sortFindings, validateGlob } from '../src/review'
 import type { ExceptionRecord, Finding } from '../src/types'
 
 const f = (ruleId: string, path: string, line: number | null): Finding => ({
@@ -53,10 +53,14 @@ describe('globMatch performance', () => {
 })
 
 describe('validateGlob', () => {
-  for (const bad of ['*', '**', '**/*', '', 'x'.repeat(201)]) it(`rejects ${bad.slice(0, 10) || '(empty)'}`, () => expect(validateGlob(bad)).toEqual(expect.any(String)))
+  for (const bad of ['*', '**', '**/*', '', 'x'.repeat(101)]) it(`rejects ${bad.slice(0, 10) || '(empty)'}`, () => expect(validateGlob(bad)).toEqual(expect.any(String)))
   for (const bad of ['*/**', '**/?*', '**/*.*', '**/**', 'a*b*c*d*e*f', '*/*/*/*/*']) {
     it(`rejects broad or complex glob ${bad}`, () => expect(validateGlob(bad)).toEqual(expect.any(String)))
   }
+  it('caps globs at 100 characters', () => {
+    expect(validateGlob('src/' + 'a'.repeat(96))).toBeNull()
+    expect(validateGlob('src/' + 'a'.repeat(97))).toMatch(/100/)
+  })
   it('accepts scoped globs', () => {
     expect(validateGlob('src/**/*.ts')).toBeNull()
     expect(validateGlob('**/*.test.ts')).toBeNull()
@@ -75,6 +79,16 @@ describe('applyExceptions', () => {
   it('matches STD-004 null-line findings by path', () => {
     const { suppressed } = applyExceptions([f('STD-004', 'scripts/a.ts', null)], [ex('STD-004', 'scripts/**')])
     expect(suppressed).toHaveLength(1)
+  })
+})
+
+describe('applyExceptions cost', () => {
+  it('compiles each exception once per call, not once per finding', () => {
+    const findings = Array.from({ length: 50 }, (_, i) => f('STD-001', `src/f${i}.ts`, i + 1))
+    const before = globStats.compiles
+    const { suppressed } = applyExceptions(findings, [ex('STD-001', 'src/**/*.ts'), ex('STD-002', 'lib/**')])
+    expect(suppressed).toHaveLength(50)
+    expect(globStats.compiles - before).toBe(2)
   })
 })
 
