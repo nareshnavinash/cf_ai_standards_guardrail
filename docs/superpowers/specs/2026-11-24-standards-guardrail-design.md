@@ -63,7 +63,7 @@ where an LLM is and isn't the right tool, evals, and clear writing about the why
 - **A read-only GitHub token is required** (`GITHUB_TOKEN` secret, fine-grained, public repos only).
   Unauthenticated calls share Cloudflare's egress IPs and hit GitHub's 60/hour limit almost at once.
 - Budget protection: cache results in KV keyed by `sha256(RULES_VERSION + LLM_MODEL + promptHash + diff)`;
-  5 reviews/min and 10 chats/min per IP; global cap of 12 LLM reviews/day (`DAILY_LLM_REVIEWS`), after which reviews run in
+  5 reviews/min and 10 chats/min per IP; a daily neuron budget (`DAILY_NEURON_BUDGET`, 9000) with 10 LLM reviews/day (`DAILY_LLM_REVIEWS`) as a secondary cap, after which reviews run in
   **static-only mode** with a banner.
 - Size limits: diff ≤ 100 KB; ≤ 10 files and ≤ 300 added lines per file reviewed; each line cut to
   500 chars; ≤ 12 KB of code per file sent to the LLM. Lockfiles, binaries, and minified files
@@ -125,10 +125,20 @@ the model.
 
 - **Control Durable Object.** One global SQLite DO holds the review index, stored diffs, in-flight dedupe and the daily review/chat counters. Free-plan KV allows 1,000 writes/day, so KV now only caches results of full, non-degraded reviews. Counters are reserved atomically before a Workflow starts.
 - **Exceptions are visitor-scoped everywhere** (not just on the sample repo), so nobody can add exceptions to a real repo's memory for other people. Anonymous visitors are read-only.
-- **Chat has its own budget:** 10 questions per review, `DAILY_CHAT_TURNS` (60) per day, and no chat for static-only reviews.
+- **Chat has its own budget:** 10 questions per review, `DAILY_CHAT_TURNS` (40) per day, and no chat for static-only reviews.
 - **Cost controls:** test files are never sent to the LLM (static rules still apply); a reply that cannot be parsed degrades the file without a retry; private repos are refused; glob matching is linear-time and rejects broad globs.
 
 ## Left to the builder
 
 UI styling, exact regexes beyond the cases in the plan's tests, sample PR contents beyond the listed
 violations, eval case wording.
+
+## Revision 4 notes
+
+- **AI budget in neurons:** usage from each Workers AI response (`usage.prompt_tokens`/`completion_tokens`, else chars/4) is converted with `NEURONS_PER_M_INPUT = 26668` and `NEURONS_PER_M_OUTPUT = 204805` (verify against the Workers AI pricing page). At `DAILY_NEURON_BUDGET` (9000) new reviews run static-only and chat is 429. Secondary count caps: `DAILY_LLM_REVIEWS` 10, `DAILY_CHAT_TURNS` 40. `max_tokens`: 1024 (checks), 600 (chat).
+- **Per-IP daily caps** (salted sha256 of `cf-connecting-ip`): `IP_DAILY_REVIEWS` 4 (LLM reviews only; over the limit the review runs static-only with a notice), `IP_DAILY_CHATS` 15.
+- **Atomic claim:** one `Control.claimReview` transaction replaces lookup/reserve/register/set; dead workflows are released and re-claimed, slots are refunded on any failure after reservation (including chat fallback replies).
+- **Errors:** 503 only for DO/Workflow/storage failures; other errors are a logged 500 `Unexpected error`. Evicted reviews are 410. `GET /exceptions` is owner-only (403).
+- **Retention:** Control drops stored diffs after 3 days and index rows after 30, pruning at most hourly; `created_at` is indexed.
+- **Public check:** a PR is reviewed only if its base repo reports `private: false`. Globs are capped at 100 chars.
+- **UI:** visitor id falls back localStorage, sessionStorage, memory ("Exceptions last only for this tab"); chat locks on 409/410 and cap-style 429s.
