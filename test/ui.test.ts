@@ -49,3 +49,27 @@ describe('public/app.js visitor id storage', () => {
     expect(html).toContain('Exceptions last only for this tab')
   })
 })
+
+describe('public/app.js poll tolerance', () => {
+  it('tolerates up to 2 consecutive 410s before showing the expired message', async () => {
+    const code = slice('function poll(', 'function finishFailed')
+    const run = async (statuses: number[]) => {
+      const failed: string[] = []
+      const calls = { n: 0 }
+      const timers: Array<() => unknown> = []
+      const ctx = {
+        POLL_MAX_MS: 1e9, POLL_MS: 0, Date, Math, clearInterval: () => {}, setInterval: () => 0,
+        setTimeout: (f: () => unknown) => void timers.push(f),
+        setStatus: () => {}, state: { reviewId: 'r' }, stopPolling: () => {}, renderResult: () => failed.push('rendered'),
+        finishFailed: (m: string) => failed.push(m), errText: () => 'expired!',
+        api: async () => ({ status: statuses[Math.min(calls.n++, statuses.length - 1)], body: null }),
+      }
+      new Function(...Object.keys(ctx), code + '; poll(Date.now(), 0)')(...Object.values(ctx))
+      while (timers.length) await timers.shift()!()
+      return failed
+    }
+    expect(await run([410, 410, 404])).not.toContain('expired!')
+    expect(await run([410, 410, 410])).toEqual(['expired!'])
+    expect(await run([410, 410, 410, 410])).toEqual(['expired!'])
+  })
+})

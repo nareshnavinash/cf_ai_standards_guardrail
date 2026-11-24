@@ -74,6 +74,7 @@ const post = (env: any, body: unknown, headers: Record<string, string> = {}) => 
 
 let t: ReturnType<typeof makeEnv>
 beforeEach(() => {
+  vi.useRealTimers()
   t = makeEnv()
 })
 
@@ -145,7 +146,7 @@ describe('POST /api/reviews samples', () => {
     const arg = t.create.mock.calls[0][0]
     expect(arg.id).toBe(body.reviewId)
     expect(arg.params).toMatchObject({ memoryKey: SAMPLE_KEY(VISITOR), repo: 'demo/sample-service', mode: 'full', prNumber: null })
-    expect(await t.control.getReviewIndex(body.reviewId)).toEqual({ repo: 'demo/sample-service', memoryKey: SAMPLE_KEY(VISITOR), visitor: VISITOR })
+    expect(await t.control.getReviewIndex(body.reviewId)).toEqual({ repo: 'demo/sample-service', memoryKey: SAMPLE_KEY(VISITOR), visitor: VISITOR, createdAt: expect.any(Number) })
     expect(await t.control.getDiff(body.reviewId)).toBe(SAMPLES[0].diff)
     expect(t.kv.put).not.toHaveBeenCalled()
   })
@@ -393,6 +394,12 @@ describe('eval route', () => {
   })
 })
 
+/** Makes the wall clock (used for review age) jump forward. */
+const wallAdvance = (ms: number) => {
+  const target = Date.now() + ms
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(target)
+}
 async function startSample(sampleId = 'leaky-config', visitor = VISITOR) {
   const r = (await (await post(t.env, { sampleId }, { 'x-visitor-id': visitor })).json()) as any
   return r.reviewId as string
@@ -436,6 +443,7 @@ describe('GET /api/reviews/:id', () => {
 describe('evicted reviews', () => {
   it('410 when indexed but missing from memory and the workflow is gone or unknown', async () => {
     const id = await startSample()
+    wallAdvance(100_000)
     t.wfStatus.status = 'unknown'
     let r = await call(t.env, 'GET', `/api/reviews/${id}`)
     expect(r.status).toBe(410)
@@ -448,8 +456,21 @@ describe('evicted reviews', () => {
     expect(r.status).toBe(503)
     expect((await call(t.env, 'POST', `/api/reviews/${id}/chat`, { message: 'hi' })).status).toBe(503)
   })
+  it('a Workflow not-found for a review younger than 90 s is still running, not 410', async () => {
+    const id = await startSample()
+    t.wfStatus.status = 'unknown'
+    let r = await call(t.env, 'GET', `/api/reviews/${id}`)
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ status: 'running' })
+    t.env.REVIEW_WORKFLOW.get = vi.fn(async () => { throw new Error('instance.not_found') })
+    r = await call(t.env, 'GET', `/api/reviews/${id}`)
+    expect(await r.json()).toEqual({ status: 'running' })
+    wallAdvance(100_000)
+    expect((await call(t.env, 'GET', `/api/reviews/${id}`)).status).toBe(410)
+  })
   it('chat on an evicted review is 410 too', async () => {
     const id = await startSample()
+    wallAdvance(100_000)
     t.wfStatus.status = 'unknown'
     expect((await call(t.env, 'POST', `/api/reviews/${id}/chat`, { message: 'hi' })).status).toBe(410)
   })

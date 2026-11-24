@@ -72,7 +72,7 @@ describe('ControlStore', () => {
 
   it('claimReview indexes the review, stores the diff and marks it in flight, atomically', () => {
     expect(claim()).toEqual({ kind: 'claimed', mode: 'full' })
-    expect(c.getReviewIndex('r1')).toEqual({ repo: 'o/r', memoryKey: 'o/r#v1', visitor: 'v1' })
+    expect(c.getReviewIndex('r1')).toEqual({ repo: 'o/r', memoryKey: 'o/r#v1', visitor: 'v1', createdAt: expect.any(Number) })
     expect(c.getDiff('r1')).toBe('DIFF')
     expect(c.getReviewIndex('nope')).toBeNull()
     expect(claim({ reviewId: 'r2' })).toEqual({ kind: 'existing', reviewId: 'r1', mode: 'full', ageMs: 0 })

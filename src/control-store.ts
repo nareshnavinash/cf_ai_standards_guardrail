@@ -95,9 +95,9 @@ export class ControlStore {
     this.sql.exec(`INSERT OR REPLACE INTO meta (k, v) VALUES ('last_prune', ?)`, now)
   }
 
-  getReviewIndex(id: string): { repo: string; memoryKey: string; visitor: string } | null {
-    const r = this.sql.exec(`SELECT repo, memory_key, visitor FROM reviews WHERE id = ? AND created_at >= ?`, id, this.now() - RETENTION_MS).toArray()
-    return r.length ? { repo: r[0].repo as string, memoryKey: r[0].memory_key as string, visitor: r[0].visitor as string } : null
+  getReviewIndex(id: string): { repo: string; memoryKey: string; visitor: string; createdAt: number } | null {
+    const r = this.sql.exec(`SELECT repo, memory_key, visitor, created_at FROM reviews WHERE id = ? AND created_at >= ?`, id, this.now() - RETENTION_MS).toArray()
+    return r.length ? { repo: r[0].repo as string, memoryKey: r[0].memory_key as string, visitor: r[0].visitor as string, createdAt: r[0].created_at as number } : null
   }
 
   getDiff(id: string): string | null {

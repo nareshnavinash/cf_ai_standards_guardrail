@@ -139,6 +139,7 @@ async function startReview(body) {
 }
 
 function poll(startedAt, misses) {
+  let gone = 0
   const secs = () => Math.round((Date.now() - startedAt) / 1000)
   setStatus(`Running… ${secs()}s`)
   clearInterval(state.tick)
@@ -151,8 +152,13 @@ function poll(startedAt, misses) {
     } catch {
       r = { status: 0, body: null }
     }
-    if (r.status === 410) return finishFailed(errText(r))
-    if (r.status === 404) {
+    if (r.status === 410) {
+      // A just-created review can briefly look expired; tolerate two in a row, like 404.
+      if (++gone >= 3) return finishFailed(errText(r))
+    } else gone = 0
+    if (r.status === 410) {
+      // keep polling
+    } else if (r.status === 404) {
       if (misses + 1 >= 3) return finishFailed('This review could not be found. Please run it again.')
       misses++
     } else if (r.status === 200 && r.body && r.body.status === 'complete') {

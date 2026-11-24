@@ -18,7 +18,7 @@ export class Control extends DurableObject<Env> {
   async clearInflight(reviewId: string): Promise<void> {
     this.store.clearInflight(reviewId)
   }
-  async getReviewIndex(id: string): Promise<{ repo: string; memoryKey: string; visitor: string } | null> {
+  async getReviewIndex(id: string): Promise<{ repo: string; memoryKey: string; visitor: string; createdAt: number } | null> {
     return this.store.getReviewIndex(id)
   }
   async getDiff(id: string): Promise<string | null> {

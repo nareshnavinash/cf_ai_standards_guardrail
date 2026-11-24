@@ -34,7 +34,7 @@ interface ControlStub {
   claimReview(a: ClaimArgs): Promise<ClaimResult>
   releaseReview(reviewId: string, refund: boolean): Promise<void>
   clearInflight(reviewId: string): Promise<void>
-  getReviewIndex(id: string): Promise<{ repo: string; memoryKey: string; visitor: string } | null>
+  getReviewIndex(id: string): Promise<{ repo: string; memoryKey: string; visitor: string; createdAt: number } | null>
   getDiff(id: string): Promise<string | null>
   recordUsage(key: string, day: string, neurons: number): Promise<void>
   reserveNeurons(day: string, key: string, amount: number, budget: number): Promise<boolean>
@@ -278,24 +278,26 @@ async function stillRunning(env: Env, control: ControlStub, memoryKey: string, e
 type ReviewState = { state: 'complete'; result: unknown } | { state: 'running' } | { state: 'failed' } | { state: 'expired' }
 
 /** The review's state: from the memory DO first, then the Workflow. Indexed but in neither place means it was evicted. */
-async function reviewState(env: Env, id: string, memory: MemoryStub): Promise<ReviewState> {
+async function reviewState(env: Env, id: string, memory: MemoryStub, createdAt: number): Promise<ReviewState> {
+  // A Workflow not-found for a review indexed under GRACE_MS ago is most likely create() still in flight, not an eviction.
+  const gone = (): ReviewState => (Date.now() - createdAt < GRACE_MS ? { state: 'running' } : { state: 'expired' })
   const done = await memory.getReview(id)
   if (done) return { state: 'complete', result: done }
   let st: { status: string; output?: unknown }
   try {
     st = (await (await env.REVIEW_WORKFLOW.get(id)).status()) as { status: string; output?: unknown }
   } catch (e) {
-    if (isNotFound(e)) return { state: 'expired' }
+    if (isNotFound(e)) return gone()
     throw new InfraError(e)
   }
   if (st.status === 'complete' && st.output && typeof st.output === 'object') return { state: 'complete', result: st.output }
-  if (st.status === 'unknown') return { state: 'expired' }
+  if (st.status === 'unknown') return gone()
   if (['errored', 'terminated'].includes(st.status)) return { state: 'failed' }
   return { state: 'running' }
 }
 
-async function getReview(env: Env, id: string, memoryKey: string): Promise<Response> {
-  const st = await reviewState(env, id, memoryFor(env, memoryKey))
+async function getReview(env: Env, id: string, memoryKey: string, createdAt: number): Promise<Response> {
+  const st = await reviewState(env, id, memoryFor(env, memoryKey), createdAt)
   if (st.state === 'complete') return json({ status: 'complete', result: st.result })
   if (st.state === 'expired') return err(410, EXPIRED_MSG, 'expired')
   if (st.state === 'failed') return json({ status: 'failed', error: FAILED_MSG })
@@ -319,7 +321,7 @@ async function reviewRoute(req: Request, env: Env, id: string, sub: string | und
 
   if (!sub) {
     if (req.method !== 'GET') return err(404, 'Not found')
-    return getReview(env, id, idx.memoryKey)
+    return getReview(env, id, idx.memoryKey, idx.createdAt)
   }
 
   if (sub === 'chat') {
@@ -329,7 +331,7 @@ async function reviewRoute(req: Request, env: Env, id: string, sub: string | und
     if (!msg) return err(400, 'Write a question first')
     if (msg.length > 2000) return err(400, 'Messages are limited to 2,000 characters')
     if (await limited(env.CHAT_LIMITER, req)) return err(429, 'Too many messages — wait a minute and try again')
-    const st = await reviewState(env, id, memory)
+    const st = await reviewState(env, id, memory, idx.createdAt)
     if (st.state === 'expired') return err(410, EXPIRED_MSG, 'expired')
     if (st.state !== 'complete') return err(409, st.state === 'failed' ? FAILED_MSG : 'The review is not finished yet', 'not_finished')
     const review = st.result as ReviewResult
