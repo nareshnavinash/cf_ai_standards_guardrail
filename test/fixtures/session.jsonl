@@ -1,0 +1,15 @@
+{"type":"user","isSidechain":false,"timestamp":"2026-11-24T06:04:19.000Z","message":{"role":"user","content":"first prompt <system-reminder>secret context</system-reminder>"}}
+{"type":"user","isSidechain":true,"timestamp":"2026-11-24T06:05:00.000Z","message":{"role":"user","content":"subagent brief"}}
+{"type":"user","isMeta":true,"timestamp":"2026-11-24T06:05:30.000Z","message":{"role":"user","content":"meta caveat"}}
+{"type":"user","timestamp":"2026-11-24T06:06:00.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"output"}]}}
+{"type":"user","timestamp":"2026-11-24T06:07:00.000Z","message":{"role":"user","content":"<command-name>/clear</command-name>"}}
+{"type":"user","timestamp":"2026-11-24T06:07:30.000Z","message":{"role":"user","content":"<local-command-stdout>x</local-command-stdout>"}}
+{"type":"user","timestamp":"2026-11-24T06:08:00.000Z","message":{"role":"user","content":"<bash-input>ls</bash-input>"}}
+{"type":"user","timestamp":"2026-11-24T06:08:30.000Z","message":{"role":"user","content":"<task-notification>done</task-notification>"}}
+{"type":"user","timestamp":"2026-11-24T06:09:00.000Z","message":{"role":"user","content":"<agent-message>hi</agent-message>"}}
+{"type":"user","timestamp":"2026-11-24T06:09:30.000Z","message":{"role":"user","content":"[Request interrupted by user]"}}
+{"type":"user","timestamp":"2026-11-24T06:10:00.000Z","message":{"role":"user","content":"<system-reminder>only a reminder</system-reminder>"}}
+not json at all
+{"type":"assistant","timestamp":"2026-11-24T06:11:00.000Z","message":{"role":"assistant","content":"an answer"}}
+{"type":"user","timestamp":"2026-11-24T06:13:00.000Z","message":{"role":"user","content":[{"type":"text","text":"second prompt"},{"type":"text","text":"with two blocks"}]}}
+{"type":"user","timestamp":"2026-11-24T06:12:00.000Z","message":{"role":"user","content":"got this\n<pasted_content id=\"7\">line one\nline two</pasted_content>"}}
