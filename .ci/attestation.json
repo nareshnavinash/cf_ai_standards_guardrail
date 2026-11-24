@@ -1,5 +1,5 @@
 {
-  "treeHash": "cfdae99e5f52d574e2f73284ab3e17a9fabdd9ddcf60115f727364226d4f6d7b",
+  "treeHash": "f6bcfb559c443f6c95b8ddd656ef267117ec040d79faf46774495eb281c1c614",
   "node": "v24.13.1",
   "passed": true,
   "testsRun": {
@@ -7,11 +7,12 @@
     "unit": 266,
     "e2e": 9
   },
-  "at": "2026-11-24T09:03:22.085Z",
+  "at": "2026-11-24T11:29:18.959Z",
   "fileHashes": {
     ".github/workflows/ci.yml": "86dd6bd1c33d7a6b4d784962d01c4ee71858c3b00db83ee598a4c5005eb18af8",
     ".gitignore": "259b73c3655af69164ee1ceca4b99bfbfbec1f16f86d872d79e9c7bcf7832ed8",
-    "README.md": "307dcfc16f3e8227e0ccccad07a05730c186d121cf51ecc8fb75c7d7c963590c",
+    "PROMPTS.md": "3ddbc43e0083666c29c70e0691a0abaefd6fa0d1e60050fb55153144353065be",
+    "README.md": "1a467a1a1ab0d7fb0568819130ebfd12a074febab520f51ec08c8674ae010f76",
     "docs/proof/chat.png": "b04fdd37eb42ed5183282daacade6a1a497fcda7cc6ab17a1204b0f39e8b394e",
     "docs/proof/exception-suppressed.png": "d72598c13f477280fe047953c6a27c9e9c4e3d321f2cbf6d69b10d217a2ab845",
     "docs/proof/mobile.png": "6304459fca2ff2696640777f11eec93bfc385859069146a8a1b13734577af4a4",
