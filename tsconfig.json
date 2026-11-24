@@ -12,5 +12,5 @@
     "resolveJsonModule": true,
     "isolatedModules": true
   },
-  "include": ["src", "test", "evals", "scripts/**/*.ts", "vitest.config.ts"]
+  "include": ["src", "test", "tests-e2e", "playwright.config.ts", "evals", "scripts/**/*.ts", "vitest.config.ts"]
 }

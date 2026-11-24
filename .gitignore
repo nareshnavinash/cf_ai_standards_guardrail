@@ -2,3 +2,5 @@ node_modules
 .wrangler
 .dev.vars
 .eval-key
+test-results
+playwright-report
