@@ -65,7 +65,7 @@ async function api(path, opts = {}) {
 }
 const errText = (r) => (r.body && typeof r.body.error === 'string' ? r.body.error : 'Something went wrong. Please try again.')
 
-const state = { notice: null, reviewId: null, running: false, chatLocked: false, lastBody: null, rules: [], timer: null, tick: null, result: null }
+const state = { notice: null, noticeCode: null, reviewId: null, running: false, chatLocked: false, lastBody: null, rules: [], timer: null, tick: null, result: null }
 
 function setBusy(busy) {
   state.running = busy
@@ -134,6 +134,7 @@ async function startReview(body) {
   }
   state.reviewId = r.body.reviewId
   state.notice = typeof r.body.notice === 'string' ? r.body.notice : null
+  state.noticeCode = typeof r.body.noticeCode === 'string' ? r.body.noticeCode : null
   poll(Date.now(), 0)
 }
 
@@ -249,9 +250,10 @@ function renderResult(res) {
   )
   const banners = $('banners')
   clear(banners)
-  if (state.notice) banners.append(banner(state.notice, true))
+  if (state.notice) banners.append(banner(state.notice))
   if (res.cached) banners.append(banner('Served from cache: this exact diff was reviewed before.', true))
-  if (res.mode === 'static-only') banners.append(banner('Static-only mode: the daily LLM budget is used up, so only the deterministic checks ran (STD-001 to STD-004).'))
+  if (res.mode === 'static-only' && !state.notice) banners.append(banner('Static-only mode: only the deterministic checks ran (STD-001 to STD-004).'))
+  if (res.degradedReason === 'budget') banners.append(banner('The daily AI budget ran out part-way, so some files only got the deterministic checks.'))
   if (res.truncated) banners.append(banner('This PR was truncated to stay within limits (10 files, 300 added lines per file).'))
   if (res.degradedFiles.length) {
     banners.append(banner(`LLM check unavailable for ${res.degradedFiles.length} file${res.degradedFiles.length === 1 ? '' : 's'}: ${res.degradedFiles.join(', ')}. Static results are still shown.`))
@@ -276,7 +278,9 @@ function renderResult(res) {
   for (const p of res.skippedFiles) sk.append(h('li', { class: 'loc' }, p))
 
   $('rerun-wrap').hidden = false
-  if (res.mode === 'static-only') lockChat('Chat is unavailable for static-only reviews (the daily AI budget was used up).')
+  if (res.mode === 'static-only') {
+    lockChat(state.noticeCode === 'budget' ? 'Daily AI budget used — AI resumes tomorrow (UTC)' : 'Chat is unavailable for static-only reviews.')
+  }
   setChatEnabled(true)
   loadExceptions()
 }
@@ -307,9 +311,10 @@ function addMsg(role, text) {
   log.scrollTop = log.scrollHeight
 }
 
-// Locked for good: 409/410 (static-only, not allowed, expired) and the 429s that mean a cap, not a per-minute rate limit. 400s stay open.
-function shouldLockChat(status, msg) {
-  return status === 409 || status === 410 || (status === 429 && /resumes tomorrow|for this review|today's chat limit/.test(msg))
+// Decided on the API's error `code`, never on message text. `not_finished` and plain 400s/429s leave chat open.
+const LOCKING_CODES = ['static_only', 'budget', 'ip_limit', 'review_limit', 'expired']
+function shouldLockChat(status, code) {
+  return (status === 409 || status === 410 || status === 429) && LOCKING_CODES.includes(code)
 }
 
 async function sendChat(ev) {
@@ -325,7 +330,7 @@ async function sendChat(ev) {
   setChatEnabled(true)
   if (!r.ok) {
     const msg = errText(r)
-    if (shouldLockChat(r.status, msg)) return lockChat(msg)
+    if (shouldLockChat(r.status, r.body && r.body.code)) return lockChat(msg)
     $('chat-error').textContent = msg
     $('chat-error').hidden = false
     return

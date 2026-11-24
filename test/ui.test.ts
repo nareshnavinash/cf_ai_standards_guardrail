@@ -6,18 +6,24 @@ const src = readFileSync(join(import.meta.dirname, '../public/app.js'), 'utf8')
 const slice = (from: string, to: string) => src.slice(src.indexOf(from), src.indexOf(to))
 
 describe('public/app.js chat lock', () => {
-  const shouldLockChat = new Function(slice('function shouldLockChat', 'async function sendChat') + '; return shouldLockChat')() as (s: number, m: string) => boolean
-  it('locks on 409 and on cap-style 429s', () => {
-    expect(shouldLockChat(409, 'Chat is unavailable for static-only reviews')).toBe(true)
-    expect(shouldLockChat(410, 'This review has expired. Run it again.')).toBe(true)
-    expect(shouldLockChat(429, 'Daily AI budget used — AI resumes tomorrow (UTC)')).toBe(true)
-    expect(shouldLockChat(429, "You've reached today's chat limit")).toBe(true)
-    expect(shouldLockChat(429, 'Chat limit reached for this review (10 questions)')).toBe(true)
+  const shouldLockChat = new Function(slice('const LOCKING_CODES', 'async function sendChat') + '; return shouldLockChat')() as (s: number, code?: string) => boolean
+  it('locks on the codes that mean the chat cannot work for this review or today', () => {
+    for (const code of ['static_only', 'budget', 'ip_limit', 'review_limit', 'expired']) expect(shouldLockChat(code === 'budget' ? 429 : 409, code), code).toBe(true)
   })
-  it('stays enabled for 400 validation errors and per-minute rate limits', () => {
-    expect(shouldLockChat(400, 'Write a question first')).toBe(false)
-    expect(shouldLockChat(400, 'Messages are limited to 2,000 characters')).toBe(false)
-    expect(shouldLockChat(429, 'Too many messages — wait a minute and try again')).toBe(false)
+  it('does not lock for not_finished 409s, 400 validation errors, per-minute 429s or unknown codes', () => {
+    expect(shouldLockChat(409, 'not_finished')).toBe(false)
+    expect(shouldLockChat(400, undefined)).toBe(false)
+    expect(shouldLockChat(429, undefined)).toBe(false)
+    expect(shouldLockChat(409, undefined)).toBe(false)
+  })
+})
+
+describe('public/app.js static-only messaging', () => {
+  const src2 = src
+  it('decides on the error code, not the message text, and shows the server notice instead of the generic banner', () => {
+    expect(src2).not.toMatch(/resumes tomorrow\|/)
+    expect(src2).toContain('state.notice')
+    expect(src2).toContain("noticeCode === 'budget'")
   })
 })
 
