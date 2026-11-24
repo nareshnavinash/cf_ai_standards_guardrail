@@ -3,7 +3,13 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
   "observability": { "enabled": true },
-  "vars": { "DAILY_LLM_REVIEWS": "12", "DAILY_CHAT_TURNS": "60" },
+  "vars": {
+    "DAILY_NEURON_BUDGET": "9000",
+    "DAILY_LLM_REVIEWS": "10",
+    "DAILY_CHAT_TURNS": "40",
+    "IP_DAILY_REVIEWS": "4",
+    "IP_DAILY_CHATS": "15"
+  },
   "assets": { "directory": "public", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
   "ai": { "binding": "AI" },
   "workflows": [

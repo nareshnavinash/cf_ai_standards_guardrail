@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
-import { ControlStore } from './control-store'
-import type { Env, ReviewMode } from './types'
+import { ControlStore, type ClaimArgs, type ClaimResult, type ReserveChatArgs } from './control-store'
+import type { Env } from './types'
 
 /** One global instance (`idFromName('global')`). Free-plan KV allows only 1,000 writes/day, so all hot state lives here. */
 export class Control extends DurableObject<Env> {
@@ -9,8 +9,14 @@ export class Control extends DurableObject<Env> {
     super(ctx, env)
     this.store = new ControlStore(ctx.storage.sql)
   }
-  async registerReview(id: string, repo: string, memoryKey: string, visitor: string, diff: string): Promise<void> {
-    this.store.registerReview(id, repo, memoryKey, visitor, diff)
+  async claimReview(a: ClaimArgs): Promise<ClaimResult> {
+    return this.store.claimReview(a)
+  }
+  async releaseReview(reviewId: string, refund: boolean): Promise<void> {
+    this.store.releaseReview(reviewId, refund)
+  }
+  async clearInflight(reviewId: string): Promise<void> {
+    this.store.clearInflight(reviewId)
   }
   async getReviewIndex(id: string): Promise<{ repo: string; memoryKey: string; visitor: string } | null> {
     return this.store.getReviewIndex(id)
@@ -18,19 +24,13 @@ export class Control extends DurableObject<Env> {
   async getDiff(id: string): Promise<string | null> {
     return this.store.getDiff(id)
   }
-  async getInflight(key: string): Promise<{ reviewId: string; mode: ReviewMode } | null> {
-    return this.store.getInflight(key)
+  async recordUsage(key: string, day: string, neurons: number): Promise<void> {
+    this.store.recordUsage(key, day, neurons)
   }
-  async setInflight(key: string, reviewId: string, mode: ReviewMode): Promise<void> {
-    this.store.setInflight(key, reviewId, mode)
+  async reserveChat(a: ReserveChatArgs): Promise<'ok' | 'daily' | 'review' | 'ip' | 'budget'> {
+    return this.store.reserveChat(a)
   }
-  async clearInflight(reviewId: string): Promise<void> {
-    this.store.clearInflight(reviewId)
-  }
-  async reserveReview(day: string, cap: number): Promise<boolean> {
-    return this.store.reserveReview(day, cap)
-  }
-  async reserveChat(reviewId: string, day: string, dailyCap: number, perReviewCap: number): Promise<'ok' | 'daily' | 'review'> {
-    return this.store.reserveChat(reviewId, day, dailyCap, perReviewCap)
+  async refundChat(a: { reviewId: string; day: string; ip: string | null }): Promise<void> {
+    this.store.refundChat(a)
   }
 }

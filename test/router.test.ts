@@ -52,6 +52,7 @@ function makeEnv(over: Record<string, unknown> = {}) {
     CHAT_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
     DAILY_LLM_REVIEWS: '12',
     DAILY_CHAT_TURNS: '60',
+    DAILY_NEURON_BUDGET: '9000',
     EVAL_KEY: 'secret-eval-key',
     ...over,
   }
@@ -188,7 +189,7 @@ describe('POST /api/reviews samples', () => {
     expect(t.create.mock.calls[0][0].params.memoryKey).toBe(SAMPLE_KEY('anon'))
   })
   it('returns 503 when storage fails, never 500', async () => {
-    t.control.registerReview = vi.fn(async () => {
+    t.control.claimReview = vi.fn(async () => {
       throw new Error('storage down')
     })
     const r = await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })
@@ -196,10 +197,66 @@ describe('POST /api/reviews samples', () => {
     expect(await r.json()).toEqual({ error: 'Service is busy, try again later' })
     expect(t.create).not.toHaveBeenCalled()
   })
-  it('returns 503 when the workflow cannot be created', async () => {
+  it('returns 503 when the workflow cannot be created, and releases the review and refunds its slot', async () => {
+    const t2 = makeEnv({ DAILY_LLM_REVIEWS: '1' })
+    t = t2
     t.create.mockRejectedValueOnce(new Error('workflow quota'))
+    const spy = vi.spyOn(t.control, 'releaseReview')
     const r = await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })
     expect(r.status).toBe(503)
+    expect(spy).toHaveBeenCalledWith(expect.any(String), true)
+    expect(await t.control.getReviewIndex(spy.mock.calls[0][0] as string)).toBeNull()
+    const again = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+    expect(again.mode).toBe('full') // the only daily slot was refunded
+  })
+  it('a stuck in-flight marker (errored / terminated / unknown / get throws) is released and claimed again', async () => {
+    for (const how of ['errored', 'terminated', 'unknown', 'throws']) {
+      t = makeEnv({ DAILY_LLM_REVIEWS: '1' })
+      const a = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+      if (how === 'throws') t.env.REVIEW_WORKFLOW.get = vi.fn(async () => { throw new Error('gone') })
+      else t.wfStatus.status = how
+      const b = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+      expect(b.reviewId, how).not.toBe(a.reviewId)
+      expect(b.mode, how).toBe('full') // slot refunded on release
+      expect(t.create).toHaveBeenCalledTimes(2)
+      expect(await t.control.getReviewIndex(a.reviewId)).toBeNull()
+    }
+  })
+  it('a running workflow keeps the marker (same id back)', async () => {
+    const a = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+    t.wfStatus.status = 'queued'
+    const b = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+    expect(b.reviewId).toBe(a.reviewId)
+  })
+  it('an unexpected (non-infrastructure) error is a 500 "Unexpected error", logged, never a 503', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    t.control.claimReview = vi.fn(async () => undefined)
+    const r = await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })
+    expect(r.status).toBe(500)
+    expect(await r.json()).toEqual({ error: 'Unexpected error' })
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
+  })
+  it('falls back to static-only with a notice once an IP used its daily LLM reviews; cached/static do not count', async () => {
+    const ip = { 'cf-connecting-ip': '203.0.113.9' }
+    const v = (n: number) => `0000000${n}-2222-4333-8444-555555555555`
+    for (let n = 1; n <= 4; n++) {
+      const b = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': v(n), ...ip })).json()) as any
+      expect(b.mode).toBe('full')
+    }
+    const r = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': v(5), ...ip })).json()) as any
+    expect(r.mode).toBe('static-only')
+    expect(r.notice).toMatch(/today/i)
+    expect(t.create.mock.calls.at(-1)![0].params.mode).toBe('static-only')
+    const other = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': v(6), 'cf-connecting-ip': '203.0.113.10' })).json()) as any
+    expect(other.mode).toBe('full')
+    const stored = JSON.stringify(await t.control.getReviewIndex(r.reviewId))
+    expect(stored).not.toContain('203.0.113.9')
+  })
+  it('runs static-only once the daily neuron budget is spent', async () => {
+    await t.control.recordUsage('earlier', DAY(), 9000)
+    const r = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+    expect(r.mode).toBe('static-only')
   })
 })
 
@@ -301,12 +358,49 @@ describe('GET /api/reviews/:id', () => {
   })
   it('maps errored/terminated/unknown to a fixed failed message', async () => {
     const id = await startSample()
-    for (const s of ['errored', 'terminated', 'unknown']) {
+    for (const s of ['errored', 'terminated']) {
       t.wfStatus.status = s
       const b = (await (await call(t.env, 'GET', `/api/reviews/${id}`)).json()) as any
       expect(b.status).toBe('failed')
       expect(b.error).toBe('The review could not be completed. Please try again.')
     }
+  })
+})
+
+describe('evicted reviews', () => {
+  it('410 when indexed but missing from memory and the workflow is gone or unknown', async () => {
+    const id = await startSample()
+    t.wfStatus.status = 'unknown'
+    let r = await call(t.env, 'GET', `/api/reviews/${id}`)
+    expect(r.status).toBe(410)
+    expect(await r.json()).toEqual({ error: 'This review has expired. Run it again.' })
+    t.env.REVIEW_WORKFLOW.get = vi.fn(async () => { throw new Error('instance not found') })
+    r = await call(t.env, 'GET', `/api/reviews/${id}`)
+    expect(r.status).toBe(410)
+  })
+  it('chat on an evicted review is 410 too', async () => {
+    const id = await startSample()
+    t.wfStatus.status = 'unknown'
+    expect((await call(t.env, 'POST', `/api/reviews/${id}/chat`, { message: 'hi' })).status).toBe(410)
+  })
+})
+
+describe('DO failures on review routes', () => {
+  it('index lookup, memory read and exception list failures are 503 busy, not 500', async () => {
+    const id = await startSample()
+    t.control.getReviewIndex = vi.fn(async () => { throw new Error('do down') })
+    for (const [m, p] of [['GET', `/api/reviews/${id}`], ['GET', `/api/reviews/${id}/exceptions`], ['POST', `/api/reviews/${id}/chat`]]) {
+      const r = await call(t.env, m, p, m === 'POST' ? { message: 'x' } : undefined, { 'x-visitor-id': VISITOR })
+      expect(r.status, p).toBe(503)
+      expect(await r.json()).toEqual({ error: 'Service is busy, try again later' })
+    }
+    const t2 = makeEnv()
+    t = t2
+    const id2 = await startSample()
+    t.mem(SAMPLE_KEY(VISITOR)).listExceptions = vi.fn(async () => { throw new Error('mem down') })
+    expect((await call(t.env, 'GET', `/api/reviews/${id2}/exceptions`, undefined, { 'x-visitor-id': VISITOR })).status).toBe(503)
+    t.mem(SAMPLE_KEY(VISITOR)).getReview = vi.fn(async () => { throw new Error('mem down') })
+    expect((await call(t.env, 'GET', `/api/reviews/${id2}`)).status).toBe(503)
   })
 })
 
@@ -379,7 +473,73 @@ describe('chat', () => {
     expect((await chat(b)).status).toBe(200)
     const r = await chat(a)
     expect(r.status).toBe(429)
-    expect(await r.json()).toEqual({ error: 'Daily AI budget used — chat resumes tomorrow' })
+    expect(await r.json()).toEqual({ error: 'Daily AI budget used — AI resumes tomorrow (UTC)' })
+  })
+  it('locks chat once the neuron budget is spent', async () => {
+    const id = await startSample()
+    await complete(id)
+    await t.control.recordUsage('x', DAY(), 9000)
+    const r = await chat(id)
+    expect(r.status).toBe(429)
+    expect(await r.json()).toEqual({ error: 'Daily AI budget used — AI resumes tomorrow (UTC)' })
+    expect(t.env.AI.run).not.toHaveBeenCalled()
+  })
+  it('records chat neurons in Control', async () => {
+    const id = await startSample()
+    await complete(id)
+    await chat(id, 'hello')
+    expect(await t.control.neuronsSpent(DAY())).toBeGreaterThan(0)
+  })
+  it('429 "chat limit" per IP after 15 turns (hashed, per day)', async () => {
+    const ip = { 'cf-connecting-ip': '198.51.100.7' }
+    const id = await startSample()
+    await complete(id)
+    for (let i = 0; i < 10; i++) expect((await call(t.env, 'POST', `/api/reviews/${id}/chat`, { message: 'q' }, ip)).status).toBe(200)
+    const id2 = await startSample('swallowed-errors')
+    await complete(id2)
+    for (let i = 0; i < 5; i++) expect((await call(t.env, 'POST', `/api/reviews/${id2}/chat`, { message: 'q' }, ip)).status).toBe(200)
+    const r = await call(t.env, 'POST', `/api/reviews/${id2}/chat`, { message: 'q' }, ip)
+    expect(r.status).toBe(429)
+    expect(await r.json()).toEqual({ error: "You've reached today's chat limit" })
+    expect((await call(t.env, 'POST', `/api/reviews/${id2}/chat`, { message: 'q' }, { 'cf-connecting-ip': '198.51.100.8' })).status).toBe(200)
+  })
+  it('a fallback reply (AI failed) refunds the per-review, daily and per-IP slots', async () => {
+    t = makeEnv({ DAILY_CHAT_TURNS: '1', IP_DAILY_CHATS: '1' })
+    const ip = { 'cf-connecting-ip': '198.51.100.7' }
+    const id = await startSample()
+    await complete(id)
+    const ok = t.env.AI.run
+    t.env.AI.run = vi.fn(async () => { throw new Error('boom') })
+    for (let i = 0; i < 12; i++) {
+      const r = await call(t.env, 'POST', `/api/reviews/${id}/chat`, { message: 'q' }, ip)
+      expect(r.status).toBe(200)
+      expect(((await r.json()) as any).reply).toMatch(/could not answer/)
+    }
+    t.env.AI.run = ok
+    expect((await call(t.env, 'POST', `/api/reviews/${id}/chat`, { message: 'q' }, ip)).status).toBe(200)
+    expect((await call(t.env, 'POST', `/api/reviews/${id}/chat`, { message: 'q' }, ip)).status).toBe(429)
+  })
+  it('a failure before the AI reply refunds the slot and is a 503', async () => {
+    const t2 = makeEnv({ DAILY_CHAT_TURNS: '1' })
+    t = t2
+    const id = await startSample()
+    await complete(id)
+    const mem = t.mem(SAMPLE_KEY(VISITOR))
+    const orig = mem.getChat
+    mem.getChat = vi.fn(async () => { throw new Error('mem down') })
+    expect((await chat(id)).status).toBe(503)
+    mem.getChat = orig
+    expect((await chat(id)).status).toBe(200)
+  })
+  it('still returns a paid AI reply when saving the chat history fails', async () => {
+    const id = await startSample()
+    await complete(id)
+    t.mem(SAMPLE_KEY(VISITOR)).appendChat = vi.fn(async () => { throw new Error('mem down') })
+    const r = await chat(id, 'hello')
+    expect(r.status).toBe(200)
+    const b = (await r.json()) as any
+    expect(b.reply).toBe('Here is how to fix it.')
+    expect(b.history.at(-1).content).toBe('Here is how to fix it.')
   })
   it('keeps histories separate across reviews of the same visitor', async () => {
     const a = await startSample('leaky-config')
@@ -400,13 +560,25 @@ describe('exceptions', () => {
     call(t.env, 'POST', `/api/reviews/${id}/exceptions`, body, headers)
   const good = { ruleId: 'STD-007', pathGlob: 'src/**', reason: 'internal tool' }
 
+  it('GET is owner-only: other visitors and anonymous callers on a visitor-owned review get 403', async () => {
+    const id = await startSample()
+    expect((await add(id, good)).status).toBe(201)
+    const get = (h: Record<string, string>) => call(t.env, 'GET', `/api/reviews/${id}/exceptions`, undefined, h)
+    expect((await get({ 'x-visitor-id': OTHER })).status).toBe(403)
+    expect((await get({})).status).toBe(403)
+    expect((await get({ 'x-visitor-id': 'not-a-uuid' })).status).toBe(403)
+    expect((await get({ 'x-visitor-id': VISITOR })).status).toBe(200)
+    const shared = (await (await post(t.env, { sampleId: 'clean-change' })).json()) as any
+    expect((await call(t.env, 'GET', `/api/reviews/${shared.reviewId}/exceptions`)).status).toBe(200)
+    expect((await call(t.env, 'GET', `/api/reviews/${shared.reviewId}/exceptions`, undefined, { 'x-visitor-id': VISITOR })).status).toBe(403)
+  })
   it('creates, lists and deletes', async () => {
     const id = await startSample()
     const r = await add(id, good)
     expect(r.status).toBe(201)
     const rec = (await r.json()) as any
     expect(rec).toMatchObject(good)
-    const list = (await (await call(t.env, 'GET', `/api/reviews/${id}/exceptions`)).json()) as any[]
+    const list = (await (await call(t.env, 'GET', `/api/reviews/${id}/exceptions`, undefined, { 'x-visitor-id': VISITOR })).json()) as any[]
     expect(list).toHaveLength(1)
     expect((await call(t.env, 'DELETE', `/api/reviews/${id}/exceptions/${rec.id}`, undefined, { 'x-visitor-id': VISITOR })).status).toBe(204)
     expect((await call(t.env, 'DELETE', `/api/reviews/${id}/exceptions/${rec.id}`, undefined, { 'x-visitor-id': VISITOR })).status).toBe(404)
@@ -444,7 +616,7 @@ describe('exceptions', () => {
       expect((await add(mine.reviewId, good, {})).status).toBe(400)
       expect((await add(anon.reviewId, good)).status).toBe(403)
       expect((await add(anon.reviewId, good, {})).status).toBe(400)
-      const ex = (await (await call(t.env, 'GET', `/api/reviews/${mine.reviewId}/exceptions`)).json()) as any[]
+      const ex = (await (await call(t.env, 'GET', `/api/reviews/${mine.reviewId}/exceptions`, undefined, { 'x-visitor-id': VISITOR })).json()) as any[]
       expect(await (await call(t.env, 'GET', `/api/reviews/${anon.reviewId}/exceptions`)).json()).toEqual([])
       const del = await call(t.env, 'DELETE', `/api/reviews/${mine.reviewId}/exceptions/${ex[0].id}`, undefined, { 'x-visitor-id': OTHER })
       expect(del.status).toBe(403)

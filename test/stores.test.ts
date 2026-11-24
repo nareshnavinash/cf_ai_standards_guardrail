@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { sqliteAdapter } from './helpers/sqlite'
 import { MemoryStore } from '../src/memory-store'
 import { ControlStore } from '../src/control-store'
@@ -59,42 +59,122 @@ describe('MemoryStore', () => {
 describe('ControlStore', () => {
   let c: ControlStore
   let now = 1_000_000
-  beforeEach(() => void (c = new ControlStore(sqliteAdapter(), () => now)))
+  const DAY = '2026-11-24'
+  const claim = (over: Record<string, unknown> = {}) =>
+    c.claimReview({
+      inflightKey: 'k1', reviewId: 'r1', repo: 'o/r', memoryKey: 'o/r#v1', visitor: 'v1', diff: 'DIFF', day: DAY,
+      cap: 10, neuronBudget: 9000, ip: 'ip1', ipCap: 4, needsBudget: true, ...over,
+    } as any)
+  beforeEach(() => {
+    now = 1_000_000
+    c = new ControlStore(sqliteAdapter(), () => now)
+  })
 
-  it('indexes reviews and stores their diff', () => {
-    c.registerReview('id1', 'o/r', 'o/r#v1', 'v1', 'DIFF')
-    expect(c.getReviewIndex('id1')).toEqual({ repo: 'o/r', memoryKey: 'o/r#v1', visitor: 'v1' })
-    expect(c.getDiff('id1')).toBe('DIFF')
+  it('claimReview indexes the review, stores the diff and marks it in flight, atomically', () => {
+    expect(claim()).toEqual({ kind: 'claimed', mode: 'full' })
+    expect(c.getReviewIndex('r1')).toEqual({ repo: 'o/r', memoryKey: 'o/r#v1', visitor: 'v1' })
+    expect(c.getDiff('r1')).toBe('DIFF')
     expect(c.getReviewIndex('nope')).toBeNull()
-    expect(c.getDiff('nope')).toBeNull()
+    expect(claim({ reviewId: 'r2' })).toEqual({ kind: 'existing', reviewId: 'r1', mode: 'full' })
+    expect(c.getReviewIndex('r2')).toBeNull()
   })
-  it('deletes rows older than 30 days on write', () => {
-    c.registerReview('old', 'o/r', 'k', 'v', 'D')
-    now += 31 * 24 * 60 * 60 * 1000
-    c.registerReview('new', 'o/r', 'k', 'v', 'D')
-    expect(c.getReviewIndex('old')).toBeNull()
-    expect(c.getDiff('old')).toBeNull()
-    expect(c.getReviewIndex('new')).not.toBeNull()
-  })
-  it('in-flight entries expire after 10 minutes and can be cleared by review id', () => {
-    c.setInflight('k1', 'r1', 'full')
-    expect(c.getInflight('k1')).toEqual({ reviewId: 'r1', mode: 'full' })
+  it('in-flight claims expire after 10 minutes and clearInflight frees the key', () => {
+    claim()
     now += 9 * 60 * 1000
-    expect(c.getInflight('k1')).not.toBeNull()
+    expect(claim({ reviewId: 'r2' }).kind).toBe('existing')
     now += 2 * 60 * 1000
-    expect(c.getInflight('k1')).toBeNull()
-    c.setInflight('k2', 'r2', 'full')
-    c.clearInflight('r2')
-    expect(c.getInflight('k2')).toBeNull()
+    expect(claim({ reviewId: 'r3' })).toEqual({ kind: 'claimed', mode: 'full' })
+    c.clearInflight('r3')
+    expect(claim({ reviewId: 'r4' })).toEqual({ kind: 'claimed', mode: 'full' })
   })
-  it('reserveReview is atomic against the daily cap', () => {
-    const got = Array.from({ length: 5 }, () => c.reserveReview('2026-11-24', 3))
-    expect(got).toEqual([true, true, true, false, false])
-    expect(c.reserveReview('2026-11-25', 3)).toBe(true)
+  it('releaseReview clears the marker and the index, and refunds the slot only when asked', () => {
+    expect(claim({ cap: 1 })).toEqual({ kind: 'claimed', mode: 'full' })
+    c.releaseReview('r1', true)
+    expect(c.getReviewIndex('r1')).toBeNull()
+    expect(claim({ reviewId: 'r2', cap: 1 })).toEqual({ kind: 'claimed', mode: 'full' })
+    c.releaseReview('r2', false) // no refund: the slot stays spent
+    expect(claim({ reviewId: 'r3', cap: 1 })).toEqual({ kind: 'claimed', mode: 'static-only' })
+    c.releaseReview('r3', true)
+    c.releaseReview('r3', true) // a static-only claim holds no slot, so nothing is refunded (never twice)
+    expect(claim({ reviewId: 'r4', cap: 1 })).toEqual({ kind: 'claimed', mode: 'static-only' })
   })
-  it('reserveChat enforces the per-review and daily caps', () => {
-    for (let i = 0; i < 10; i++) expect(c.reserveChat('r1', '2026-11-24', 60, 10)).toBe('ok')
-    expect(c.reserveChat('r1', '2026-11-24', 60, 10)).toBe('review')
-    expect(c.reserveChat('r2', '2026-11-24', 10, 10)).toBe('daily')
+  it('a finished review keeps its slot (clearInflight) so a later release cannot refund it', () => {
+    claim({ cap: 1 })
+    c.clearInflight('r1')
+    c.releaseReview('r1', true)
+    expect((claim({ reviewId: 'r2', cap: 1 }) as any).mode).toBe('static-only')
+  })
+  it('needsBudget=false (cached diff) takes no slot; forceStatic runs static-only', () => {
+    expect(claim({ cap: 0, needsBudget: false })).toEqual({ kind: 'claimed', mode: 'full' })
+    expect(claim({ reviewId: 'r2', inflightKey: 'k2', forceStatic: true })).toEqual({ kind: 'claimed', mode: 'static-only' })
+  })
+  it('daily count cap falls back to static-only', () => {
+    const modes = [1, 2, 3, 4, 5].map((i) => (claim({ reviewId: 'r' + i, inflightKey: 'k' + i, cap: 3, ip: null }) as any).mode)
+    expect(modes).toEqual(['full', 'full', 'full', 'static-only', 'static-only'])
+    expect((claim({ reviewId: 'n', inflightKey: 'kn', cap: 3, day: '2026-11-25', ip: null }) as any).mode).toBe('full')
+  })
+  it('claims static-only once the neuron budget is spent, and recordUsage is idempotent per key', () => {
+    c.recordUsage('r0:llm-check:0', DAY, 5000)
+    c.recordUsage('r0:llm-check:0', DAY, 5000)
+    expect(c.neuronsSpent(DAY)).toBe(5000)
+    expect((claim() as any).mode).toBe('full')
+    c.recordUsage('r0:llm-check:1', DAY, 4000)
+    expect(c.neuronsSpent(DAY)).toBe(9000)
+    expect(claim({ reviewId: 'r2', inflightKey: 'k2' })).toEqual({ kind: 'claimed', mode: 'static-only' })
+    expect(c.neuronsSpent('2026-11-25')).toBe(0)
+  })
+  it('per-IP daily cap applies to LLM reviews only and reports ip-limit', () => {
+    for (let i = 0; i < 4; i++) expect(claim({ reviewId: 'r' + i, inflightKey: 'k' + i, ipCap: 4 }).kind).toBe('claimed')
+    expect(claim({ reviewId: 'x', inflightKey: 'kx', ipCap: 4 })).toEqual({ kind: 'ip-limit' })
+    expect(c.getReviewIndex('x')).toBeNull()
+    expect(claim({ reviewId: 'y', inflightKey: 'ky', ipCap: 4, needsBudget: false }).kind).toBe('claimed')
+    expect(claim({ reviewId: 'z', inflightKey: 'kz', ipCap: 4, forceStatic: true }).kind).toBe('claimed')
+    expect(claim({ reviewId: 'o', inflightKey: 'ko', ipCap: 4, ip: 'ip2' }).kind).toBe('claimed')
+  })
+  it('an in-flight hit is returned even when the IP is over its cap', () => {
+    claim({ ipCap: 1 })
+    expect(claim({ reviewId: 'r2', ipCap: 1 })).toEqual({ kind: 'existing', reviewId: 'r1', mode: 'full' })
+  })
+  it('reserveChat enforces per-review, per-IP, daily and neuron limits; refundChat gives the slot back', () => {
+    const rc = (o: Record<string, unknown> = {}) =>
+      c.reserveChat({ reviewId: 'r1', day: DAY, dailyCap: 40, perReviewCap: 10, ip: 'ip1', ipCap: 15, neuronBudget: 9000, ...o } as any)
+    for (let i = 0; i < 10; i++) expect(rc()).toBe('ok')
+    expect(rc()).toBe('review')
+    expect(rc({ reviewId: 'r2', dailyCap: 10 })).toBe('daily')
+    for (let i = 0; i < 5; i++) expect(rc({ reviewId: 'a' + i })).toBe('ok')
+    expect(rc({ reviewId: 'b' })).toBe('ip')
+    expect(rc({ reviewId: 'b', ip: null })).toBe('ok')
+    c.refundChat({ reviewId: 'r1', day: DAY, ip: 'ip1' })
+    expect(rc()).toBe('ok')
+    c.recordUsage('u', DAY, 9000)
+    expect(rc({ reviewId: 'c', ip: 'ip9' })).toBe('budget')
+  })
+  it('deletes index rows older than 30 days, at most once per hour', () => {
+    claim()
+    now += 31 * 24 * 60 * 60 * 1000
+    claim({ reviewId: 'r2', inflightKey: 'k2' })
+    expect(c.getReviewIndex('r1')).toBeNull()
+    expect(c.getReviewIndex('r2')).not.toBeNull()
+  })
+  it('drops stored diffs after 3 days but keeps the index for 30', () => {
+    claim()
+    now += 3 * 24 * 60 * 60 * 1000 + 1000
+    claim({ reviewId: 'r2', inflightKey: 'k2' })
+    expect(c.getDiff('r1')).toBeNull()
+    expect(c.getReviewIndex('r1')).not.toBeNull()
+    expect(c.getDiff('r2')).toBe('DIFF')
+  })
+  it('prunes at most once per hour', () => {
+    const sql = sqliteAdapter()
+    const spy = vi.fn(sql.exec.bind(sql))
+    const store = new ControlStore({ exec: spy } as any, () => now)
+    const deletes = () => spy.mock.calls.filter((a) => /DELETE FROM reviews/.test(a[0] as string)).length
+    const args = { inflightKey: 'k', reviewId: 'a', repo: 'o/r', memoryKey: 'm', visitor: 'v', diff: 'D', day: DAY, cap: 9, neuronBudget: 9, ip: null, ipCap: 4, needsBudget: false } as any
+    store.claimReview(args)
+    store.claimReview({ ...args, inflightKey: 'k2', reviewId: 'b' })
+    expect(deletes()).toBe(1)
+    now += 61 * 60 * 1000
+    store.claimReview({ ...args, inflightKey: 'k3', reviewId: 'c' })
+    expect(deletes()).toBe(2)
   })
 })
