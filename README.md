@@ -153,7 +153,7 @@ npm run dev            # local Worker; needs `npx wrangler login` and a .dev.var
 
 The first `test:e2e` needs the browser once: `npx playwright install chromium`. The e2e suite uses `wrangler.e2e.jsonc` (same bindings, no rate-limit bindings, budget 0) and a throwaway state directory.
 
-`npm run eval` reads `EVAL_KEY` from the environment or from a gitignored `.eval-key` file. `PROMPTS.md` is generated from Claude Code session logs with `node scripts/export-prompts.mjs --modified-on <date> --match <text> --runtime --out PROMPTS.md <log dir>` (flags are documented at the top of the script).
+`npm run eval` reads `EVAL_KEY` from the environment or from a gitignored `.eval-key` file. `PROMPTS.md` started as an export of the Claude Code session logs (`node scripts/export-prompts.mjs --modified-on <date> --match <text> --runtime --out PROMPTS.md <log dir>`; flags are documented at the top of the script). I then added the decision log, my multiple-choice answers and the orchestration briefs; its editing note says exactly what was changed.
 
 ## Deploy
 
