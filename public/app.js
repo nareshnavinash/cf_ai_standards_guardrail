@@ -13,17 +13,26 @@ function uuid() {
     return (c === 'x' ? r : (r & 3) | 8).toString(16)
   })
 }
-const visitorId = (() => {
-  try {
-    let v = localStorage.getItem('visitorId')
-    if (!v) {
-      v = uuid()
-      localStorage.setItem('visitorId', v)
+/**
+ * The visitor id scopes exceptions server-side. Prefer localStorage; fall back to sessionStorage, then memory.
+ * `persistent` is false when exceptions will only last for this tab.
+ */
+const { visitorId, persistent } = (() => {
+  for (const [name, persistent] of [['localStorage', true], ['sessionStorage', false]]) {
+    try {
+      const store = window[name]
+      let v = store.getItem('visitorId')
+      if (!v) {
+        v = uuid()
+        store.setItem('visitorId', v)
+        if (store.getItem('visitorId') !== v) throw new Error('storage does not persist')
+      }
+      return { visitorId: v, persistent }
+    } catch {
+      /* try the next store */
     }
-    return v
-  } catch {
-    return uuid()
   }
+  return { visitorId: uuid(), persistent: false }
 })()
 
 function h(tag, props, ...kids) {
@@ -56,7 +65,7 @@ async function api(path, opts = {}) {
 }
 const errText = (r) => (r.body && typeof r.body.error === 'string' ? r.body.error : 'Something went wrong. Please try again.')
 
-const state = { reviewId: null, running: false, chatLocked: false, lastBody: null, rules: [], timer: null, tick: null, result: null }
+const state = { notice: null, reviewId: null, running: false, chatLocked: false, lastBody: null, rules: [], timer: null, tick: null, result: null }
 
 function setBusy(busy) {
   state.running = busy
@@ -124,6 +133,7 @@ async function startReview(body) {
     return
   }
   state.reviewId = r.body.reviewId
+  state.notice = typeof r.body.notice === 'string' ? r.body.notice : null
   poll(Date.now(), 0)
 }
 
@@ -140,6 +150,7 @@ function poll(startedAt, misses) {
     } catch {
       r = { status: 0, body: null }
     }
+    if (r.status === 410) return finishFailed(errText(r))
     if (r.status === 404) {
       if (misses + 1 >= 3) return finishFailed('This review could not be found. Please run it again.')
       misses++
@@ -238,6 +249,7 @@ function renderResult(res) {
   )
   const banners = $('banners')
   clear(banners)
+  if (state.notice) banners.append(banner(state.notice, true))
   if (res.cached) banners.append(banner('Served from cache: this exact diff was reviewed before.', true))
   if (res.mode === 'static-only') banners.append(banner('Static-only mode: the daily LLM budget is used up, so only the deterministic checks ran (STD-001 to STD-004).'))
   if (res.truncated) banners.append(banner('This PR was truncated to stay within limits (10 files, 300 added lines per file).'))
@@ -295,6 +307,11 @@ function addMsg(role, text) {
   log.scrollTop = log.scrollHeight
 }
 
+// Locked for good: 409/410 (static-only, not allowed, expired) and the 429s that mean a cap, not a per-minute rate limit. 400s stay open.
+function shouldLockChat(status, msg) {
+  return status === 409 || status === 410 || (status === 429 && /resumes tomorrow|for this review|today's chat limit/.test(msg))
+}
+
 async function sendChat(ev) {
   ev.preventDefault()
   const input = $('chat-input')
@@ -308,7 +325,7 @@ async function sendChat(ev) {
   setChatEnabled(true)
   if (!r.ok) {
     const msg = errText(r)
-    if (r.status === 429 && /resumes tomorrow|for this review/.test(msg)) return lockChat(msg)
+    if (shouldLockChat(r.status, msg)) return lockChat(msg)
     $('chat-error').textContent = msg
     $('chat-error').hidden = false
     return
@@ -317,6 +334,7 @@ async function sendChat(ev) {
 }
 
 async function init() {
+  $('visitor-notice').hidden = persistent
   $('pr-form').addEventListener('submit', (ev) => {
     ev.preventDefault()
     const url = $('pr-url').value.trim()
