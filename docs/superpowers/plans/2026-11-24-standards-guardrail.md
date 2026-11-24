@@ -280,3 +280,8 @@ Cases: the 4 samples; 2 clean changes; 2 prompt-injection attempts; 1 lockfile-o
 - **S1 GitHub App:** `POST /webhooks/github` verifies `x-hub-signature-256` (HMAC-SHA256 with `GITHUB_WEBHOOK_SECRET`, constant-time); on `pull_request` `opened|synchronize` starts the Workflow with a final `post-comment` step that upserts one summary comment via an installation token (JWT from `GITHUB_APP_PRIVATE_KEY`). Tests: bad signature → 401; other events → 204. Needs a demo repo — ask Naresh first.
 - **S2 MCP:** `/mcp` with tools `list_rules` and `review_diff({ diff })` (static + LLM, same limits and budget).
 - **S3 `/stats`:** per-rule fired/suppressed counts from KV counters updated in the `persist` step.
+
+## Known limits (accepted after review round 5)
+
+- A Workers AI transport error is settled to 0 neurons; if the model actually ran before the connection dropped, our count is slightly low. Cloudflare's own free-plan cap is the backstop, and the 1,000-neuron gap between `DAILY_NEURON_BUDGET` (9,000) and the free allowance (10,000) absorbs it.
+- A step retried after it already settled a positive amount is not re-checked against the budget before its AI call; its spend is added afterwards (and to the original day). Bounded by one file's worth of tokens per retry.

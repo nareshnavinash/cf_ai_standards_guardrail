@@ -265,7 +265,10 @@ async function stillRunning(env: Env, control: ControlStub, memoryKey: string, e
   try {
     status = ((await (await env.REVIEW_WORKFLOW.get(existing.reviewId)).status()) as { status: string }).status
   } catch (e) {
-    if (!isNotFound(e)) throw new InfraError(e)
+    if (!isNotFound(e)) {
+      if (young) return true // a transient Workflow API error inside the grace window: keep treating the review as running
+      throw new InfraError(e)
+    }
     status = 'unknown'
   }
   // Inside the grace window the Workflow may simply not exist yet (create in flight): not-found means alive there,

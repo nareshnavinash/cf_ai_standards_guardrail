@@ -251,6 +251,15 @@ describe('POST /api/reviews samples', () => {
       expect(await t.control.getReviewIndex(a.reviewId)).toBeNull()
     }
   })
+  it('a young marker with a transient Workflow error is still alive (same id back, 202, not 503)', async () => {
+    const a = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+    t.advance(20_000)
+    t.env.REVIEW_WORKFLOW.get = vi.fn(async () => { throw new Error('network blip') })
+    const r = await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })
+    expect(r.status).toBe(202)
+    expect(((await r.json()) as any).reviewId).toBe(a.reviewId)
+    expect(t.create).toHaveBeenCalledTimes(1)
+  })
   it('an old marker with a transient Workflow error is a 503 and is NOT released', async () => {
     const a = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
     t.advance(100_000)

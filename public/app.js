@@ -152,12 +152,10 @@ function poll(startedAt, misses) {
     } catch {
       r = { status: 0, body: null }
     }
+    if (r.status !== 410) gone = 0
     if (r.status === 410) {
       // A just-created review can briefly look expired; tolerate two in a row, like 404.
       if (++gone >= 3) return finishFailed(errText(r))
-    } else gone = 0
-    if (r.status === 410) {
-      // keep polling
     } else if (r.status === 404) {
       if (misses + 1 >= 3) return finishFailed('This review could not be found. Please run it again.')
       misses++
