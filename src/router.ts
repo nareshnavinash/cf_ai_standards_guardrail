@@ -247,9 +247,9 @@ async function createReview(req: Request, env: Env): Promise<Response> {
 }
 
 /**
- * True when an in-flight review is genuinely still running. A marker younger than GRACE_MS is alive without asking the Workflow
- * (its create may still be in flight). Past that, only an explicit errored/terminated status or a not-found releases it (slot
- * refunded); any other Workflow error is an InfraError (503) and releases nothing.
+ * True when an in-flight review is genuinely still running. The Workflow is always asked: an explicit errored/terminated status
+ * releases the marker (slot refunded). A not-found releases it only past GRACE_MS (before that the create may still be in
+ * flight, so the marker counts as alive); any other Workflow error is an InfraError (503) and releases nothing.
  */
 async function stillRunning(env: Env, control: ControlStub, memoryKey: string, existing: { reviewId: string; ageMs: number }): Promise<boolean> {
   try {
@@ -260,7 +260,7 @@ async function stillRunning(env: Env, control: ControlStub, memoryKey: string, e
   } catch {
     /* fall through */
   }
-  if (existing.ageMs < GRACE_MS) return true
+  const young = existing.ageMs < GRACE_MS
   let status: string
   try {
     status = ((await (await env.REVIEW_WORKFLOW.get(existing.reviewId)).status()) as { status: string }).status
@@ -268,7 +268,9 @@ async function stillRunning(env: Env, control: ControlStub, memoryKey: string, e
     if (!isNotFound(e)) throw new InfraError(e)
     status = 'unknown'
   }
-  const dead = ['errored', 'terminated', 'unknown'].includes(status)
+  // Inside the grace window the Workflow may simply not exist yet (create in flight): not-found means alive there,
+  // but an explicit errored/terminated status is a fast failure and is released.
+  const dead = young ? ['errored', 'terminated'].includes(status) : ['errored', 'terminated', 'unknown'].includes(status)
   if (dead) await control.releaseReview(existing.reviewId, true)
   return !dead
 }

@@ -225,15 +225,30 @@ describe('POST /api/reviews samples', () => {
       expect(await t.control.getReviewIndex(a.reviewId)).toBeNull()
     }
   })
-  it('a young marker (< 90 s) is alive without asking the Workflow: no release while create is still in flight', async () => {
+  it('a young marker (< 90 s) whose Workflow is not found yet is alive: no release while create is still in flight', async () => {
     const a = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
     t.env.REVIEW_WORKFLOW.get = vi.fn(async () => { throw new Error('instance.not_found') })
-    t.wfStatus.status = 'errored'
     t.advance(60_000)
     const b = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
     expect(b.reviewId).toBe(a.reviewId)
-    expect(t.env.REVIEW_WORKFLOW.get).not.toHaveBeenCalled()
     expect(await t.control.getReviewIndex(a.reviewId)).not.toBeNull()
+    t.wfStatus.status = 'unknown'
+    t.env.REVIEW_WORKFLOW.get = vi.fn(async () => ({ status: async () => t.wfStatus }))
+    const c = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+    expect(c.reviewId).toBe(a.reviewId)
+  })
+  it('a fast-failing workflow inside the grace window is released on re-run', async () => {
+    for (const how of ['errored', 'terminated']) {
+      t = makeEnv({ DAILY_LLM_REVIEWS: '1' })
+      const a = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+      t.wfStatus.status = how
+      t.advance(20_000)
+      const b = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+      expect(b.reviewId, how).not.toBe(a.reviewId)
+      expect(b.mode, how).toBe('full')
+      expect(t.create).toHaveBeenCalledTimes(2)
+      expect(await t.control.getReviewIndex(a.reviewId)).toBeNull()
+    }
   })
   it('an old marker with a transient Workflow error is a 503 and is NOT released', async () => {
     const a = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
