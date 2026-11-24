@@ -8,7 +8,7 @@ const slice = (from: string, to: string) => src.slice(src.indexOf(from), src.ind
 describe('public/app.js chat lock', () => {
   const shouldLockChat = new Function(slice('const LOCKING_CODES', 'async function sendChat') + '; return shouldLockChat')() as (s: number, code?: string) => boolean
   it('locks on the codes that mean the chat cannot work for this review or today', () => {
-    for (const code of ['static_only', 'budget', 'ip_limit', 'review_limit', 'expired']) expect(shouldLockChat(code === 'budget' ? 429 : 409, code), code).toBe(true)
+    for (const code of ['static_only', 'budget', 'ip_limit', 'review_limit', 'review_limit_ip', 'expired']) expect(shouldLockChat(code === 'budget' ? 429 : 409, code), code).toBe(true)
   })
   it('does not lock for not_finished 409s, 400 validation errors, per-minute 429s or unknown codes', () => {
     expect(shouldLockChat(409, 'not_finished')).toBe(false)

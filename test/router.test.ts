@@ -292,7 +292,7 @@ describe('POST /api/reviews samples', () => {
     const stored = JSON.stringify(await t.control.getReviewIndex(r.reviewId))
     expect(stored).not.toContain('203.0.113.9')
   })
-  it('caps ALL review POSTs per IP per day (cached and static-only too) with 429 ip_limit', async () => {
+  it('caps ALL review POSTs per IP per day (cached and static-only too) with 429 review_limit_ip', async () => {
     t = makeEnv({ IP_DAILY_REVIEWS_TOTAL: '2', IP_DAILY_REVIEWS: '9' })
     const ip = { 'cf-connecting-ip': '203.0.113.50' }
     const v = (n: number) => `0000000${n}-2222-4333-8444-555555555555`
@@ -300,7 +300,7 @@ describe('POST /api/reviews samples', () => {
     expect((await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': v(2), ...ip })).status).toBe(202)
     const r = await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': v(3), ...ip })
     expect(r.status).toBe(429)
-    expect(await r.json()).toEqual({ error: "You've reached today's review limit", code: 'ip_limit' })
+    expect(await r.json()).toEqual({ error: "You've reached today's review limit", code: 'review_limit_ip' })
     expect(t.create).toHaveBeenCalledTimes(2)
   })
   it('stores no diff for static-only reviews', async () => {

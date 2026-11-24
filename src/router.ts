@@ -70,7 +70,7 @@ function guard<T extends object>(stub: T): T {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 }
-type ErrCode = 'static_only' | 'not_finished' | 'budget' | 'ip_limit' | 'review_limit' | 'expired'
+type ErrCode = 'static_only' | 'not_finished' | 'budget' | 'ip_limit' | 'review_limit' | 'review_limit_ip' | 'expired'
 const err = (status: number, message: string, code?: ErrCode) => json(code ? { error: message, code } : { error: message }, status)
 const isNotFound = (e: unknown) => /not[ ._-]?found/i.test(e instanceof Error ? e.message : String(e))
 const busy = () => err(503, BUSY_MSG)
@@ -214,7 +214,7 @@ async function createReview(req: Request, env: Env): Promise<Response> {
       noticeCode = 'ip_limit'
       claim = await control.claimReview({ ...base, reviewId, needsBudget: false, forceStatic: true })
     }
-    if (claim.kind === 'total-limit') return err(429, "You've reached today's review limit", 'ip_limit')
+    if (claim.kind === 'total-limit') return err(429, "You've reached today's review limit", 'review_limit_ip')
     if (claim.kind === 'claimed') {
       mode = claim.mode
       if (mode === 'static-only' && !forceStaticOnly && !notice && needsBudget) {

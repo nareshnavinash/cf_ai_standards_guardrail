@@ -318,7 +318,7 @@ function addMsg(role, text) {
 }
 
 // Decided on the API's error `code`, never on message text. `not_finished` and plain 400s/429s leave chat open.
-const LOCKING_CODES = ['static_only', 'budget', 'ip_limit', 'review_limit', 'expired']
+const LOCKING_CODES = ['static_only', 'budget', 'ip_limit', 'review_limit', 'review_limit_ip', 'expired']
 function shouldLockChat(status, code) {
   return (status === 409 || status === 410 || status === 429) && LOCKING_CODES.includes(code)
 }
