@@ -75,7 +75,7 @@ describe('ControlStore', () => {
     expect(c.getReviewIndex('r1')).toEqual({ repo: 'o/r', memoryKey: 'o/r#v1', visitor: 'v1' })
     expect(c.getDiff('r1')).toBe('DIFF')
     expect(c.getReviewIndex('nope')).toBeNull()
-    expect(claim({ reviewId: 'r2' })).toEqual({ kind: 'existing', reviewId: 'r1', mode: 'full' })
+    expect(claim({ reviewId: 'r2' })).toEqual({ kind: 'existing', reviewId: 'r1', mode: 'full', ageMs: 0 })
     expect(c.getReviewIndex('r2')).toBeNull()
   })
   it('in-flight claims expire after 10 minutes and clearInflight frees the key', () => {
@@ -133,7 +133,44 @@ describe('ControlStore', () => {
   })
   it('an in-flight hit is returned even when the IP is over its cap', () => {
     claim({ ipCap: 1 })
-    expect(claim({ reviewId: 'r2', ipCap: 1 })).toEqual({ kind: 'existing', reviewId: 'r1', mode: 'full' })
+    expect(claim({ reviewId: 'r2', ipCap: 1 })).toEqual({ kind: 'existing', reviewId: 'r1', mode: 'full', ageMs: 0 })
+  })
+  it('an in-flight hit reports how old the marker is', () => {
+    claim()
+    now += 30_000
+    expect(claim({ reviewId: 'r2' })).toEqual({ kind: 'existing', reviewId: 'r1', mode: 'full', ageMs: 30_000 })
+  })
+  it('reserveNeurons is a per-key reservation: idempotent, refused past the budget, settled to actual usage', () => {
+    expect(c.reserveNeurons(DAY, 'a', 4000, 9000)).toBe(true)
+    expect(c.reserveNeurons(DAY, 'a', 4000, 9000)).toBe(true) // same key: no double charge
+    expect(c.neuronsSpent(DAY)).toBe(4000)
+    expect(c.reserveNeurons(DAY, 'b', 4000, 9000)).toBe(true)
+    expect(c.reserveNeurons(DAY, 'c', 1500, 9000)).toBe(false) // 8000 + 1500 > 9000
+    expect(c.neuronsSpent(DAY)).toBe(8000)
+    c.settleNeurons('a', 300)
+    c.settleNeurons('a', 300) // idempotent
+    expect(c.neuronsSpent(DAY)).toBe(4300)
+    expect(c.reserveNeurons(DAY, 'c', 1500, 9000)).toBe(true)
+    expect(c.neuronsSpent(DAY)).toBe(5800)
+    c.settleNeurons('c', 0) // refund
+    expect(c.neuronsSpent(DAY)).toBe(4300)
+    c.settleNeurons('nope', 5)
+    expect(c.neuronsSpent(DAY)).toBe(4300)
+  })
+  it('per-IP cap on ALL review claims (cached and static-only too)', () => {
+    for (let i = 0; i < 3; i++) expect(claim({ reviewId: 'r' + i, inflightKey: 'k' + i, needsBudget: false, ipTotalCap: 3 }).kind).toBe('claimed')
+    expect(claim({ reviewId: 'x', inflightKey: 'kx', needsBudget: false, ipTotalCap: 3 })).toEqual({ kind: 'total-limit' })
+    expect(claim({ reviewId: 'y', inflightKey: 'ky', forceStatic: true, ipTotalCap: 3 })).toEqual({ kind: 'total-limit' })
+    expect(c.getReviewIndex('x')).toBeNull()
+    expect(claim({ reviewId: 'z', inflightKey: 'k0', ipTotalCap: 3 }).kind).toBe('existing')
+    expect(claim({ reviewId: 'o', inflightKey: 'ko', ip: 'ip2', ipTotalCap: 3 }).kind).toBe('claimed')
+  })
+  it('stores the diff only for full-mode reviews', () => {
+    claim()
+    claim({ reviewId: 'r2', inflightKey: 'k2', forceStatic: true })
+    expect(c.getDiff('r1')).toBe('DIFF')
+    expect(c.getDiff('r2')).toBeNull()
+    expect(c.getReviewIndex('r2')).not.toBeNull()
   })
   it('reserveChat enforces per-review, per-IP, daily and neuron limits; refundChat gives the slot back', () => {
     const rc = (o: Record<string, unknown> = {}) =>

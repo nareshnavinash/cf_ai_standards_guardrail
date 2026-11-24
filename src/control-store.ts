@@ -23,15 +23,18 @@ export interface ClaimArgs {
   /** Hashed client IP, or null when unknown (per-IP limits are skipped). */
   ip: string | null
   ipCap: number
+  /** Per-IP daily cap on ALL claims (LLM, cached, static-only). Default 30. */
+  ipTotalCap?: number
   /** True when the review would spend LLM budget (not a cached diff). */
   needsBudget: boolean
   /** Run static-only without taking any slot. */
   forceStatic?: boolean
 }
 export type ClaimResult =
-  | { kind: 'existing'; reviewId: string; mode: ReviewMode }
+  | { kind: 'existing'; reviewId: string; mode: ReviewMode; ageMs: number }
   | { kind: 'claimed'; mode: ReviewMode }
   | { kind: 'ip-limit' }
+  | { kind: 'total-limit' }
 
 export interface ReserveChatArgs {
   reviewId: string
@@ -65,6 +68,8 @@ export class ControlStore {
     sql.exec(`CREATE TABLE IF NOT EXISTS slots (review_id TEXT PRIMARY KEY, day TEXT NOT NULL, ip TEXT)`)
     sql.exec(`CREATE TABLE IF NOT EXISTS usage_keys (key TEXT PRIMARY KEY, created_at INTEGER NOT NULL)`)
     sql.exec(`CREATE INDEX IF NOT EXISTS usage_keys_created ON usage_keys (created_at)`)
+    // Per-call neuron reservations (reviewId:stepName or chat:<uuid>), settled to actual usage after the AI call.
+    sql.exec(`CREATE TABLE IF NOT EXISTS reservations (key TEXT PRIMARY KEY, day TEXT NOT NULL, amount INTEGER NOT NULL, created_at INTEGER NOT NULL)`)
     sql.exec(`CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL)`)
   }
 
@@ -78,6 +83,7 @@ export class ControlStore {
     this.sql.exec(`DELETE FROM reviews WHERE created_at < ?`, cutoff)
     this.sql.exec(`DELETE FROM counters WHERE created_at < ?`, cutoff)
     this.sql.exec(`DELETE FROM usage_keys WHERE created_at < ?`, cutoff)
+    this.sql.exec(`DELETE FROM reservations WHERE created_at < ?`, cutoff)
     this.sql.exec(`DELETE FROM slots WHERE review_id NOT IN (SELECT id FROM reviews)`)
     this.sql.exec(`DELETE FROM inflight WHERE expires_at < ?`, now)
     // Only the window since the previous prune can hold newly expired diffs, so the scan stays small.
@@ -130,13 +136,41 @@ export class ControlStore {
   }
 
   /**
+   * Reserves `amount` neurons for one AI call, before it is made. Idempotent per key (a retry does not charge twice);
+   * refused when it would push the day past `budget`.
+   */
+  reserveNeurons(day: string, key: string, amount: number, budget: number): boolean {
+    if (this.sql.exec(`SELECT 1 FROM reservations WHERE key = ?`, key).toArray().length) return true
+    const n = Math.max(0, Math.ceil(amount))
+    if (this.neuronsSpent(day) + n > budget) return false
+    this.sql.exec(`INSERT INTO reservations (key, day, amount, created_at) VALUES (?, ?, ?, ?)`, key, day, n, this.now())
+    this.bump(`neurons:${day}`, n)
+    return true
+  }
+
+  /** Adjusts a reservation to the real usage (0 refunds it). Unknown keys and repeats are no-ops. */
+  settleNeurons(key: string, actual: number): void {
+    const r = this.sql.exec(`SELECT day, amount FROM reservations WHERE key = ?`, key).toArray()
+    if (!r.length) return
+    const a = Math.max(0, Math.ceil(actual))
+    const delta = a - (r[0].amount as number)
+    if (delta !== 0) this.bump(`neurons:${r[0].day as string}`, delta)
+    this.sql.exec(`UPDATE reservations SET amount = ? WHERE key = ?`, a, key)
+  }
+
+  /**
    * One synchronous transaction (no awaits, so nothing interleaves): dedupe against an in-flight review, decide the mode,
    * take the daily/IP slots, then index the review and mark it in flight.
    */
   claimReview(a: ClaimArgs): ClaimResult {
     this.prune()
-    const hit = this.sql.exec(`SELECT review_id, mode FROM inflight WHERE key = ? AND expires_at > ?`, a.inflightKey, this.now()).toArray()
-    if (hit.length) return { kind: 'existing', reviewId: hit[0].review_id as string, mode: hit[0].mode as ReviewMode }
+    const hit = this.sql.exec(`SELECT review_id, mode, expires_at FROM inflight WHERE key = ? AND expires_at > ?`, a.inflightKey, this.now()).toArray()
+    if (hit.length) {
+      const claimedAt = (hit[0].expires_at as number) - INFLIGHT_MS
+      return { kind: 'existing', reviewId: hit[0].review_id as string, mode: hit[0].mode as ReviewMode, ageMs: this.now() - claimedAt }
+    }
+    const totalKey = a.ip ? `ip-total:${a.day}:${a.ip}` : null
+    if (totalKey && this.count(totalKey) >= (a.ipTotalCap ?? 30)) return { kind: 'total-limit' }
 
     let mode: ReviewMode = 'full'
     let takeSlot = false
@@ -151,13 +185,14 @@ export class ControlStore {
       if (a.ip) this.bump(`ip-review:${a.day}:${a.ip}`, 1)
       this.sql.exec(`INSERT OR REPLACE INTO slots (review_id, day, ip) VALUES (?, ?, ?)`, a.reviewId, a.day, a.ip)
     }
+    if (totalKey) this.bump(totalKey, 1)
     this.sql.exec(
       `INSERT OR REPLACE INTO reviews (id, repo, memory_key, visitor, diff, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
       a.reviewId,
       a.repo,
       a.memoryKey,
       a.visitor,
-      a.diff,
+      mode === 'full' ? a.diff : '', // chat is disabled for static-only reviews, so their diff is never read
       this.now(),
     )
     this.sql.exec(`INSERT OR REPLACE INTO inflight (key, review_id, mode, expires_at) VALUES (?, ?, ?, ?)`, a.inflightKey, a.reviewId, mode, this.now() + INFLIGHT_MS)

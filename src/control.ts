@@ -27,6 +27,12 @@ export class Control extends DurableObject<Env> {
   async recordUsage(key: string, day: string, neurons: number): Promise<void> {
     this.store.recordUsage(key, day, neurons)
   }
+  async reserveNeurons(day: string, key: string, amount: number, budget: number): Promise<boolean> {
+    return this.store.reserveNeurons(day, key, amount, budget)
+  }
+  async settleNeurons(key: string, actual: number): Promise<void> {
+    this.store.settleNeurons(key, actual)
+  }
   async reserveChat(a: ReserveChatArgs): Promise<'ok' | 'daily' | 'review' | 'ip' | 'budget'> {
     return this.store.reserveChat(a)
   }
