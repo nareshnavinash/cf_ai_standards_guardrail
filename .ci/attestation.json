@@ -1,15 +1,15 @@
 {
-  "treeHash": "1da5592a45bf0de1f5ed596fc285ec87f1cd1a5c3f5c07486406241c2bf2fdcf",
+  "treeHash": "d60e3d8466bf4d076f9ab0a2444a0caf4eddbd3d92408563a851aafebb9b506f",
   "node": "v24.13.1",
   "passed": true,
   "testsRun": {
     "typecheck": true,
-    "unit": 264,
+    "unit": 266,
     "e2e": 9
   },
-  "at": "2026-11-24T08:25:16.570Z",
+  "at": "2026-11-24T08:53:17.755Z",
   "fileHashes": {
-    ".github/workflows/ci.yml": "be940ec2a86dbef188a1bfde1fa31ef9733c50d3ccb3a2625da02c85c84bb332",
+    ".github/workflows/ci.yml": "86dd6bd1c33d7a6b4d784962d01c4ee71858c3b00db83ee598a4c5005eb18af8",
     ".gitignore": "259b73c3655af69164ee1ceca4b99bfbfbec1f16f86d872d79e9c7bcf7832ed8",
     "README.md": "9f5c4d1b22d1c2443133cbdfd7544a20955d899c251e1bc554b7ca561f1a6e8c",
     "docs/screenshot.png": "5e1a7bf721704ee7b038771b271cd8a02bb0a61a4d9c3f9d8e947a9d864b1ac0",
@@ -53,7 +53,7 @@
     "public/app.js": "91b547d6529d05719afa828e05437bfef11fff52df5200bc87b58b83f1d31eda",
     "public/index.html": "7cebbf89f771df8930a3ea5fa21fcae1f86149fbc1262246fe3fabddbe04634f",
     "public/styles.css": "61d2825fc1ea5328e419a4d153104ce932c12028e8145b7f5735a7904db45179",
-    "scripts/attest.mjs": "be3f5570ce743b426002634843b7cf3bf67c81d706c2d1862e72bedcf26a296a",
+    "scripts/attest.mjs": "4e5745f74d03957525f0719b9ebf2db34cae7c1a76d3d4511bdd47582bb988ef",
     "scripts/export-prompts.mjs": "43f82c5f6bfbd17679bbb12ea076bb974596b069e8c68963d83b65a92d7aa653",
     "scripts/runtime-prompts.ts": "1f9b89cc000278becdc8472c5d3d0e30a1f13c03ab327694e26a88785a93d157",
     "src/budget.ts": "cce38cafb354477c2f444a3006ce2407688015235a09c87caf5315076dbf714d",
@@ -74,7 +74,7 @@
     "src/sql.ts": "a1080497adfba5971658b9cb07a579bd912cd3e229cee958309ac81407177f14",
     "src/types.ts": "32d5513869e2502a3127d7216fe55e754b4b9c70d250c0f9ae24280855a4d741",
     "src/workflow.ts": "9abd142d50ffaa595a29feb13302efb5ed5cdc04f513ab2e03ba8eb9e0c29479",
-    "test/attest.test.ts": "0518497bd317743f0c6b0c61c6e70398ca8294a4982e2a696f8f22b4beb6da19",
+    "test/attest.test.ts": "a84e5ade8a6b91feaf87114b4637f1c46a6f56790e7303ef8b7ba0d0731ba7f6",
     "test/budget.test.ts": "f36fb6b05df06c9ebd7705ca2dcf910b64baf9c2f376b0eb621e7bebefcd58d3",
     "test/chat.test.ts": "da7bf49b102bcad74554634879b2648adbb3f21928d2e21220b610f04447e4f4",
     "test/diff.test.ts": "4b922e31df7e48e08bd8651ce3baf9281de80b6f97d527991736651aefc5a6a2",
@@ -101,8 +101,8 @@
     "test/ui.test.ts": "f90925173f5297b462196f6eb6b2554569b04fa0da63c65652a85ccf186ea9ed",
     "test/workflow.test.ts": "9aa0ee22343149a0c75d2c3af712067ccdc051cceed6e50b271ff7bec1c23b3f",
     "tests-e2e/guardrail.spec.ts": "685f4923229eb5a18ce42158b9b82fa62d04ef1776693d92265866a9c528b052",
-    "tsconfig.json": "8973c598f8be4ff9c098ae256d7430d99b88761beaf8fcc8c6f7c3ff853a980d",
-    "vitest.config.ts": "0a35d0cbe4d4571a088948df71a97a2c465ea678a38a14c079da21a40d18be60",
+    "tsconfig.json": "34b38ebf88eff868f0e19fe9894317a73dd3f17100d46e2764334af4e3bb531f",
+    "vitest.config.ts": "bcfec8f2dfed49738b4bc87ed04bfcf33f1d824f8a35ec2967c6ba18c05816ce",
     "wrangler.e2e.jsonc": "63f44d70298ab16f0a384926db047564de33523262abac8bf29fd06575baff13",
     "wrangler.jsonc": "2d63f1d6bdc56b5a0aab10cbbceea31ec591182895bee8ab20f9b8817ce66697"
   }
