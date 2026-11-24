@@ -30,6 +30,12 @@ jobs:
         run: npm test
       - name: End-to-end tests
         if: steps.attest.outputs.attested != 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::notice::Skipping e2e: no CLOUDFLARE_API_TOKEN secret (wrangler dev needs Cloudflare access for bindings)."
+            exit 0
+          fi
           npx playwright install --with-deps chromium
           npm run test:e2e

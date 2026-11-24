@@ -4,7 +4,7 @@
  *   node scripts/attest.mjs            run typecheck, unit tests and e2e; on success write .ci/attestation.json
  *   node scripts/attest.mjs --verify   recompute the tree hash and compare (exit 0 match, 10 mismatch, with the reason)
  *
- * The tree hash covers every git-tracked file (path and contents) except .ci/attestation.json itself, so it changes
+ * The tree hash covers every git-tracked file (path and contents) except .ci/attestation.json itself and anything under examples/, so it changes
  * when any tracked file changes and does not change when the attestation is committed. Untracked files are ignored.
  */
 import { createHash } from 'node:crypto'
@@ -40,8 +40,11 @@ export function computeTreeHash(files, root = process.cwd()) {
   return h.digest('hex')
 }
 
+/** Demo code under examples/ is not app code: it is the target of example pull requests and must not invalidate the attestation. */
+export const isHashed = (f) => !f.startsWith('examples/')
+
 export function trackedFiles(root = process.cwd()) {
-  return execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean)
+  return execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean).filter(isHashed)
 }
 
 /** Explains why an attestation no longer matches, or returns null when it does. */

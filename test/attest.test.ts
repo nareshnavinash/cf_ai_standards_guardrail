@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 // @ts-expect-error plain ESM script without types
-import { computeTreeHash, fileHashes, mismatchReason } from '../scripts/attest.mjs'
+import { computeTreeHash, fileHashes, isHashed, mismatchReason, trackedFiles } from '../scripts/attest.mjs'
 
 let dir: string
 const write = (p: string, s: string) => {
@@ -42,6 +42,18 @@ describe('computeTreeHash', () => {
     write('.ci/attestation.json', '{"different":true}')
     expect(computeTreeHash(files, dir)).toBe(before)
     expect(computeTreeHash(['a.txt', 'src/b.ts'], dir)).toBe(before)
+  })
+})
+
+describe('examples exclusion', () => {
+  it('isHashed skips examples/ only', () => {
+    expect(isHashed('examples/demo-service/src/orders.ts')).toBe(false)
+    expect(isHashed('src/examples.ts')).toBe(true)
+  })
+  it('trackedFiles never lists examples/ files', () => {
+    const files = trackedFiles()
+    expect(files.length).toBeGreaterThan(0)
+    expect(files.some((f: string) => f.startsWith('examples/'))).toBe(false)
   })
 })
 

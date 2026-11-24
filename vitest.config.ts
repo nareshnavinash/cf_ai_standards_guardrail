@@ -7,5 +7,5 @@ export default defineConfig({
       'cloudflare:workers': resolve(import.meta.dirname, 'test/stubs/cloudflare-workers.ts'),
     },
   },
-  test: { environment: 'node', include: ['test/**/*.test.ts'] },
+  test: { environment: 'node', include: ['test/**/*.test.ts'], exclude: ['examples/**', 'node_modules/**'] },
 })

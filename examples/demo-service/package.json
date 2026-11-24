@@ -1,0 +1,8 @@
+{
+  "name": "demo-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A small order service used as the target of the example pull requests reviewed by Standards Guardrail.",
+  "scripts": { "test": "vitest run" }
+}
