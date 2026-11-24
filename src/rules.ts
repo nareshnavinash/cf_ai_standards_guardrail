@@ -1,6 +1,6 @@
 import type { Rule } from './types'
 
-export const RULES_VERSION = '2026.11.1'
+export const RULES_VERSION = '2026.11.2'
 
 export const RULES: Rule[] = [
   {

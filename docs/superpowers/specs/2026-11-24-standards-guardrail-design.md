@@ -87,7 +87,7 @@ The README states the Agents SDK choice explicitly, so it reads as a trade-off, 
 
 ## The design
 
-**Standards catalog** (`RULES_VERSION = "2026.11.1"`), 7 rules:
+**Standards catalog** (`RULES_VERSION = "2026.11.2"`), 7 rules:
 
 | ID | Rule | Check |
 |---|---|---|

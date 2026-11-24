@@ -16,7 +16,7 @@ const mk = (path: string, n: number, len = 10): DiffFile => ({
 describe('rules', () => {
   it('has STD-001..007', () => {
     expect(RULES.map((r) => r.id)).toEqual(['STD-001', 'STD-002', 'STD-003', 'STD-004', 'STD-005', 'STD-006', 'STD-007'])
-    expect(RULES_VERSION).toBe('2026.11.1')
+    expect(RULES_VERSION).toBe('2026.11.2')
     expect(ruleById('STD-005')?.kind).toBe('llm')
     expect(ruleById('nope')).toBeUndefined()
   })
