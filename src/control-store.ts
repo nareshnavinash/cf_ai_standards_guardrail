@@ -70,6 +70,8 @@ export class ControlStore {
     sql.exec(`CREATE INDEX IF NOT EXISTS usage_keys_created ON usage_keys (created_at)`)
     // Per-call neuron reservations (reviewId:stepName or chat:<uuid>), settled to actual usage after the AI call.
     sql.exec(`CREATE TABLE IF NOT EXISTS reservations (key TEXT PRIMARY KEY, day TEXT NOT NULL, amount INTEGER NOT NULL, created_at INTEGER NOT NULL)`)
+    // Real usage accumulated per reservation key across step attempts.
+    sql.exec(`CREATE TABLE IF NOT EXISTS reservation_spend (key TEXT PRIMARY KEY, spent INTEGER NOT NULL)`)
     sql.exec(`CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL)`)
   }
 
@@ -84,6 +86,7 @@ export class ControlStore {
     this.sql.exec(`DELETE FROM counters WHERE created_at < ?`, cutoff)
     this.sql.exec(`DELETE FROM usage_keys WHERE created_at < ?`, cutoff)
     this.sql.exec(`DELETE FROM reservations WHERE created_at < ?`, cutoff)
+    this.sql.exec(`DELETE FROM reservation_spend WHERE key NOT IN (SELECT key FROM reservations)`)
     this.sql.exec(`DELETE FROM slots WHERE review_id NOT IN (SELECT id FROM reviews)`)
     this.sql.exec(`DELETE FROM inflight WHERE expires_at < ?`, now)
     // Only the window since the previous prune can hold newly expired diffs, so the scan stays small.
@@ -151,14 +154,20 @@ export class ControlStore {
     return true
   }
 
-  /** Adjusts a reservation to the real usage (0 refunds it). Unknown keys and repeats are no-ops. */
+  /**
+   * Adjusts a reservation to the real usage. Usage adds up across attempts of the same key (a retried step keeps what
+   * earlier attempts really spent); 0 refunds only when nothing was ever spent. Unknown keys are no-ops.
+   */
   settleNeurons(key: string, actual: number): void {
     const r = this.sql.exec(`SELECT day, amount FROM reservations WHERE key = ?`, key).toArray()
     if (!r.length) return
     const a = Math.max(0, Math.ceil(actual))
-    const delta = a - (r[0].amount as number)
+    const prev = this.sql.exec(`SELECT spent FROM reservation_spend WHERE key = ?`, key).toArray()
+    const cumulative = (prev.length ? (prev[0].spent as number) : 0) + a
+    if (cumulative > 0) this.sql.exec(`INSERT OR REPLACE INTO reservation_spend (key, spent) VALUES (?, ?)`, key, cumulative)
+    const delta = cumulative - (r[0].amount as number)
     if (delta !== 0) this.bump(`neurons:${r[0].day as string}`, delta)
-    this.sql.exec(`UPDATE reservations SET amount = ? WHERE key = ?`, a, key)
+    this.sql.exec(`UPDATE reservations SET amount = ? WHERE key = ?`, cumulative, key)
   }
 
   /**

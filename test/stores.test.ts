@@ -148,7 +148,6 @@ describe('ControlStore', () => {
     expect(c.reserveNeurons(DAY, 'c', 1500, 9000)).toBe(false) // 8000 + 1500 > 9000
     expect(c.neuronsSpent(DAY)).toBe(8000)
     c.settleNeurons('a', 300)
-    c.settleNeurons('a', 300) // idempotent
     expect(c.neuronsSpent(DAY)).toBe(4300)
     expect(c.reserveNeurons(DAY, 'c', 1500, 9000)).toBe(true)
     expect(c.neuronsSpent(DAY)).toBe(5800)
@@ -156,6 +155,16 @@ describe('ControlStore', () => {
     expect(c.neuronsSpent(DAY)).toBe(4300)
     c.settleNeurons('nope', 5)
     expect(c.neuronsSpent(DAY)).toBe(4300)
+  })
+  it('settles cumulatively across step attempts', () => {
+    expect(c.reserveNeurons(DAY, 'a', 4000, 9000)).toBe(true)
+    c.settleNeurons('a', 300) // attempt 1 used 300
+    expect(c.neuronsSpent(DAY)).toBe(300)
+    expect(c.reserveNeurons(DAY, 'a', 4000, 9000)).toBe(true) // attempt 2: same key
+    c.settleNeurons('a', 250)
+    expect(c.neuronsSpent(DAY)).toBe(550) // earlier spend is kept, not overwritten
+    c.settleNeurons('a', 0) // a later failed attempt must not refund what was really spent
+    expect(c.neuronsSpent(DAY)).toBe(550)
   })
   it('a retry after a zero-settled reservation is budget-checked again', () => {
     expect(c.reserveNeurons(DAY, 'a', 4000, 9000)).toBe(true)
