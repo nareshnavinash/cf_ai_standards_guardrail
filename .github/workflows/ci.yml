@@ -1,0 +1,35 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check local test attestation
+        id: attest
+        run: |
+          if node scripts/attest.mjs --verify; then
+            echo "attested=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "attested=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install
+        if: steps.attest.outputs.attested != 'true'
+        run: npm ci
+      - name: Typecheck
+        if: steps.attest.outputs.attested != 'true'
+        run: npm run typecheck
+      - name: Unit tests
+        if: steps.attest.outputs.attested != 'true'
+        run: npm test
+      - name: End-to-end tests
+        if: steps.attest.outputs.attested != 'true'
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e
