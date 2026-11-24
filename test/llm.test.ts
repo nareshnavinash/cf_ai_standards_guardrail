@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RULES } from '../src/rules'
 import { LLM_MODEL, LlmParseError, PROMPT_HASH, buildLlmPrompt, checkFileWithLlm, parseLlmFindings } from '../src/checks/llm'
+import { LlmBudgetError, worstCaseNeurons } from '../src/budget'
 import type { DiffFile } from '../src/types'
 
 const file: DiffFile = {
@@ -89,6 +90,17 @@ describe('checkFileWithLlm', () => {
     await expect(checkFileWithLlm(junk as any, file, RULES, (n) => seen.push(n))).rejects.toBeInstanceOf(LlmParseError)
     expect(seen).toHaveLength(2)
     expect(seen[1]).toBeGreaterThan(0)
+  })
+  it('reserves the worst case BEFORE calling the model, and does not call it when refused', async () => {
+    const run = vi.fn().mockResolvedValue({ response: good })
+    const reserve = vi.fn(async () => true)
+    await checkFileWithLlm({ run } as any, file, RULES, undefined, reserve)
+    const { system, user } = buildLlmPrompt(file, RULES)
+    expect(reserve).toHaveBeenCalledWith(worstCaseNeurons(system.length + user.length, 1024))
+    expect(reserve.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[0])
+    const refused = vi.fn().mockResolvedValue({ response: good })
+    await expect(checkFileWithLlm({ run: refused } as any, file, RULES, undefined, async () => false)).rejects.toBeInstanceOf(LlmBudgetError)
+    expect(refused).not.toHaveBeenCalled()
   })
   it('rejects when ai.run rejects', async () => {
     const ai = { run: vi.fn().mockRejectedValue(new Error('quota')) }

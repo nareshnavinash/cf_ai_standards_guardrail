@@ -37,7 +37,8 @@ function makeEnv(over: Record<string, unknown> = {}) {
     if (!mems.has(key)) mems.set(key, asyncify(new MemoryStore(sqliteAdapter())))
     return mems.get(key)
   }
-  const controlStore = new ControlStore(sqliteAdapter())
+  const clock = { now: Date.now() }
+  const controlStore = new ControlStore(sqliteAdapter(), () => clock.now)
   const control = asyncify(controlStore)
   const create = vi.fn(async (_o: any) => ({ id: 'x' }))
   const wfStatus = { status: 'running' as string, output: undefined as unknown }
@@ -56,7 +57,8 @@ function makeEnv(over: Record<string, unknown> = {}) {
     EVAL_KEY: 'secret-eval-key',
     ...over,
   }
-  return { env, kv, create, mem, wfStatus, control }
+  const advance = (ms: number) => void (clock.now += ms)
+  return { env, kv, create, mem, wfStatus, control, advance }
 }
 
 const call = (env: any, method: string, path: string, body?: unknown, headers: Record<string, string> = {}) =>
@@ -209,12 +211,13 @@ describe('POST /api/reviews samples', () => {
     const again = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
     expect(again.mode).toBe('full') // the only daily slot was refunded
   })
-  it('a stuck in-flight marker (errored / terminated / unknown / get throws) is released and claimed again', async () => {
-    for (const how of ['errored', 'terminated', 'unknown', 'throws']) {
+  it('a stuck in-flight marker (errored / terminated / unknown / not found) is released and claimed again once past the grace period', async () => {
+    for (const how of ['errored', 'terminated', 'unknown', 'not_found']) {
       t = makeEnv({ DAILY_LLM_REVIEWS: '1' })
       const a = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
-      if (how === 'throws') t.env.REVIEW_WORKFLOW.get = vi.fn(async () => { throw new Error('gone') })
+      if (how === 'not_found') t.env.REVIEW_WORKFLOW.get = vi.fn(async () => { throw new Error('instance.not_found') })
       else t.wfStatus.status = how
+      t.advance(100_000)
       const b = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
       expect(b.reviewId, how).not.toBe(a.reviewId)
       expect(b.mode, how).toBe('full') // slot refunded on release
@@ -222,9 +225,29 @@ describe('POST /api/reviews samples', () => {
       expect(await t.control.getReviewIndex(a.reviewId)).toBeNull()
     }
   })
+  it('a young marker (< 90 s) is alive without asking the Workflow: no release while create is still in flight', async () => {
+    const a = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+    t.env.REVIEW_WORKFLOW.get = vi.fn(async () => { throw new Error('instance.not_found') })
+    t.wfStatus.status = 'errored'
+    t.advance(60_000)
+    const b = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+    expect(b.reviewId).toBe(a.reviewId)
+    expect(t.env.REVIEW_WORKFLOW.get).not.toHaveBeenCalled()
+    expect(await t.control.getReviewIndex(a.reviewId)).not.toBeNull()
+  })
+  it('an old marker with a transient Workflow error is a 503 and is NOT released', async () => {
+    const a = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+    t.advance(100_000)
+    t.env.REVIEW_WORKFLOW.get = vi.fn(async () => { throw new Error('network blip') })
+    const r = await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })
+    expect(r.status).toBe(503)
+    expect(await t.control.getReviewIndex(a.reviewId)).not.toBeNull()
+    expect(t.create).toHaveBeenCalledTimes(1)
+  })
   it('a running workflow keeps the marker (same id back)', async () => {
     const a = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
     t.wfStatus.status = 'queued'
+    t.advance(100_000)
     const b = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
     expect(b.reviewId).toBe(a.reviewId)
   })
@@ -252,6 +275,34 @@ describe('POST /api/reviews samples', () => {
     expect(other.mode).toBe('full')
     const stored = JSON.stringify(await t.control.getReviewIndex(r.reviewId))
     expect(stored).not.toContain('203.0.113.9')
+  })
+  it('caps ALL review POSTs per IP per day (cached and static-only too) with 429 ip_limit', async () => {
+    t = makeEnv({ IP_DAILY_REVIEWS_TOTAL: '2', IP_DAILY_REVIEWS: '9' })
+    const ip = { 'cf-connecting-ip': '203.0.113.50' }
+    const v = (n: number) => `0000000${n}-2222-4333-8444-555555555555`
+    expect((await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': v(1), ...ip })).status).toBe(202)
+    expect((await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': v(2), ...ip })).status).toBe(202)
+    const r = await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': v(3), ...ip })
+    expect(r.status).toBe(429)
+    expect(await r.json()).toEqual({ error: "You've reached today's review limit", code: 'ip_limit' })
+    expect(t.create).toHaveBeenCalledTimes(2)
+  })
+  it('stores no diff for static-only reviews', async () => {
+    await t.control.recordUsage('earlier', DAY(), 9000)
+    const r = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+    expect(r.mode).toBe('static-only')
+    expect(await t.control.getDiff(r.reviewId)).toBeNull()
+    expect(r.noticeCode).toBe('budget')
+    expect(r.notice).toMatch(/Daily AI budget used/)
+  })
+  it('passes cacheOnly to the workflow only when admitted on a cache hit without a slot', async () => {
+    const { cacheKey } = await import('../src/review')
+    const a = (await (await post(t.env, { sampleId: 'leaky-config' }, { 'x-visitor-id': VISITOR })).json()) as any
+    expect(t.create.mock.calls[0][0].params.cacheOnly).toBeFalsy()
+    t.kv.store.set(await cacheKey(SAMPLES[1].diff), JSON.stringify({ findings: [{ ruleId: 'STD-001', path: 'a', line: 1, message: 'm', suggestion: null, source: 'static' }], filesReviewed: 1, skippedFiles: [], truncated: false }))
+    await post(t.env, { sampleId: SAMPLES[1].id }, { 'x-visitor-id': VISITOR })
+    expect(t.create.mock.calls[1][0].params.cacheOnly).toBe(true)
+    expect(a.mode).toBe('full')
   })
   it('runs static-only once the daily neuron budget is spent', async () => {
     await t.control.recordUsage('earlier', DAY(), 9000)
@@ -373,10 +424,14 @@ describe('evicted reviews', () => {
     t.wfStatus.status = 'unknown'
     let r = await call(t.env, 'GET', `/api/reviews/${id}`)
     expect(r.status).toBe(410)
-    expect(await r.json()).toEqual({ error: 'This review has expired. Run it again.' })
-    t.env.REVIEW_WORKFLOW.get = vi.fn(async () => { throw new Error('instance not found') })
+    expect(await r.json()).toEqual({ error: 'This review has expired. Run it again.', code: 'expired' })
+    t.env.REVIEW_WORKFLOW.get = vi.fn(async () => { throw new Error('instance.not_found') })
     r = await call(t.env, 'GET', `/api/reviews/${id}`)
     expect(r.status).toBe(410)
+    t.env.REVIEW_WORKFLOW.get = vi.fn(async () => { throw new Error('network blip') })
+    r = await call(t.env, 'GET', `/api/reviews/${id}`)
+    expect(r.status).toBe(503)
+    expect((await call(t.env, 'POST', `/api/reviews/${id}/chat`, { message: 'hi' })).status).toBe(503)
   })
   it('chat on an evicted review is 410 too', async () => {
     const id = await startSample()
@@ -408,7 +463,9 @@ describe('chat', () => {
   const chat = (id: string, message = 'hi') => call(t.env, 'POST', `/api/reviews/${id}/chat`, { message })
   it('409 while the review is running, 400 for bad messages, 404 for unknown id', async () => {
     const id = await startSample()
-    expect((await chat(id)).status).toBe(409)
+    const running = await chat(id)
+    expect(running.status).toBe(409)
+    expect(((await running.json()) as any).code).toBe('not_finished')
     expect((await chat(id, '  ')).status).toBe(400)
     expect((await chat(id, 'x'.repeat(2001))).status).toBe(400)
     expect((await call(t.env, 'POST', `/api/reviews/${id}/chat`, 'nope')).status).toBe(400)
@@ -428,7 +485,9 @@ describe('chat', () => {
     await complete(id, VISITOR, { mode: 'static-only' })
     const r = await chat(id)
     expect(r.status).toBe(409)
-    expect(((await r.json()) as any).error).toMatch(/static-only/i)
+    const body = (await r.json()) as any
+    expect(body.error).toMatch(/static-only/i)
+    expect(body.code).toBe('static_only')
     expect(t.env.AI.run).not.toHaveBeenCalled()
   })
   it('replies and stores both turns once complete', async () => {
@@ -473,7 +532,7 @@ describe('chat', () => {
     expect((await chat(b)).status).toBe(200)
     const r = await chat(a)
     expect(r.status).toBe(429)
-    expect(await r.json()).toEqual({ error: 'Daily AI budget used — AI resumes tomorrow (UTC)' })
+    expect(await r.json()).toEqual({ error: 'Daily AI budget used — AI resumes tomorrow (UTC)', code: 'budget' })
   })
   it('locks chat once the neuron budget is spent', async () => {
     const id = await startSample()
@@ -481,14 +540,37 @@ describe('chat', () => {
     await t.control.recordUsage('x', DAY(), 9000)
     const r = await chat(id)
     expect(r.status).toBe(429)
-    expect(await r.json()).toEqual({ error: 'Daily AI budget used — AI resumes tomorrow (UTC)' })
+    expect(await r.json()).toEqual({ error: 'Daily AI budget used — AI resumes tomorrow (UTC)', code: 'budget' })
     expect(t.env.AI.run).not.toHaveBeenCalled()
   })
-  it('records chat neurons in Control', async () => {
+  it('reserves neurons before the AI call and settles to actual usage', async () => {
     const id = await startSample()
     await complete(id)
+    const reserve = vi.spyOn(t.control, 'reserveNeurons')
+    const settle = vi.spyOn(t.control, 'settleNeurons')
+    t.env.AI.run = vi.fn(async () => ({ response: 'ok', usage: { prompt_tokens: 100, completion_tokens: 10 } }))
     await chat(id, 'hello')
-    expect(await t.control.neuronsSpent(DAY())).toBeGreaterThan(0)
+    expect(reserve.mock.invocationCallOrder[0]).toBeLessThan((t.env.AI.run as any).mock.invocationCallOrder[0])
+    const spent = await t.control.neuronsSpent(DAY())
+    expect(spent).toBe(Math.ceil((100 * 26668 + 10 * 204805) / 1e6))
+    expect(settle).toHaveBeenCalled()
+  })
+  it('a refused neuron reservation is a 429 budget error with no AI call and the chat slot refunded', async () => {
+    t = makeEnv({ DAILY_NEURON_BUDGET: '5' })
+    const id = await startSample()
+    await complete(id)
+    const r = await chat(id, 'hello')
+    expect(r.status).toBe(429)
+    expect(await r.json()).toEqual({ error: 'Daily AI budget used — AI resumes tomorrow (UTC)', code: 'budget' })
+    expect(t.env.AI.run).not.toHaveBeenCalled()
+    expect(await t.control.reserveChat({ reviewId: id, day: DAY(), dailyCap: 1, perReviewCap: 1, ip: null, ipCap: 1, neuronBudget: 9000 })).toBe('ok')
+  })
+  it('a fallback reply also refunds its neuron reservation', async () => {
+    const id = await startSample()
+    await complete(id)
+    t.env.AI.run = vi.fn(async () => { throw new Error('boom') })
+    await chat(id, 'hello')
+    expect(await t.control.neuronsSpent(DAY())).toBe(0)
   })
   it('429 "chat limit" per IP after 15 turns (hashed, per day)', async () => {
     const ip = { 'cf-connecting-ip': '198.51.100.7' }
@@ -500,7 +582,7 @@ describe('chat', () => {
     for (let i = 0; i < 5; i++) expect((await call(t.env, 'POST', `/api/reviews/${id2}/chat`, { message: 'q' }, ip)).status).toBe(200)
     const r = await call(t.env, 'POST', `/api/reviews/${id2}/chat`, { message: 'q' }, ip)
     expect(r.status).toBe(429)
-    expect(await r.json()).toEqual({ error: "You've reached today's chat limit" })
+    expect(await r.json()).toEqual({ error: "You've reached today's chat limit", code: 'ip_limit' })
     expect((await call(t.env, 'POST', `/api/reviews/${id2}/chat`, { message: 'q' }, { 'cf-connecting-ip': '198.51.100.8' })).status).toBe(200)
   })
   it('a fallback reply (AI failed) refunds the per-review, daily and per-IP slots', async () => {

@@ -1,6 +1,8 @@
 import type { DiffFile, Finding, Rule } from '../types'
 import { RULES } from '../rules'
-import { promptChars, usageNeurons } from '../budget'
+import { LlmBudgetError, promptChars, usageNeurons, worstCaseNeurons } from '../budget'
+
+const MAX_TOKENS = 1024
 
 export const LLM_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 const MAX_CODE_BYTES = 12 * 1024
@@ -111,15 +113,22 @@ const RESPONSE_FORMAT = {
 }
 
 /** Throws the transport error if the model call fails, or LlmParseError if the reply is not the expected JSON. */
-export async function checkFileWithLlm(ai: Ai, file: DiffFile, rules: Rule[], onUsage?: (neurons: number) => void): Promise<Finding[]> {
+export async function checkFileWithLlm(
+  ai: Ai,
+  file: DiffFile,
+  rules: Rule[],
+  onUsage?: (neurons: number) => void,
+  reserve?: (worstCase: number) => Promise<boolean>,
+): Promise<Finding[]> {
   const { system, user } = buildLlmPrompt(file, rules)
   const messages = [
     { role: 'system', content: system },
     { role: 'user', content: user },
   ]
+  if (reserve && !(await reserve(worstCaseNeurons(promptChars(messages), MAX_TOKENS)))) throw new LlmBudgetError('daily AI budget used')
   const raw = await (ai as any).run(LLM_MODEL, {
     messages,
-    max_tokens: 1024,
+    max_tokens: MAX_TOKENS,
     temperature: 0.1,
     response_format: RESPONSE_FORMAT,
   })

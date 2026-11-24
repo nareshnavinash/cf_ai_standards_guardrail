@@ -4,7 +4,7 @@ import { SAMPLES } from './samples'
 import { HttpError, fetchPrDiff, parsePrUrl } from './github'
 import { cacheKey, readCachedReview, validateGlob } from './review'
 import { CHAT_FALLBACK, answerChat, relevantCode } from './chat'
-import { DEFAULT_NEURON_BUDGET } from './budget'
+import { DEFAULT_NEURON_BUDGET, LlmBudgetError } from './budget'
 import type { ClaimArgs, ClaimResult, ReserveChatArgs } from './control-store'
 
 const MAX_DIFF_BYTES = 100 * 1024
@@ -14,9 +14,11 @@ const REPO_RE = /^[a-z0-9._-]{1,100}\/[a-z0-9._-]{1,100}$/
 const SAMPLE_REPO = 'demo/sample-service'
 const CHAT_TURNS_PER_REVIEW = 10
 const FAILED_MSG = 'The review could not be completed. Please try again.'
+const BUDGET_NOTICE = 'Daily AI budget used — AI resumes tomorrow (UTC). This review ran static-only.'
 const EXPIRED_MSG = 'This review has expired. Run it again.'
 const BUDGET_MSG = 'Daily AI budget used — AI resumes tomorrow (UTC)'
 const IP_REVIEW_NOTICE = "You've used today's AI reviews for your network, so this one ran static-only. AI reviews resume tomorrow (UTC)."
+const GRACE_MS = 90 * 1000 // a fresh claim may not have reached REVIEW_WORKFLOW.create yet
 const IP_SALT = 'standards-guardrail-ip-v1'
 const BUSY_MSG = 'Service is busy, try again later'
 
@@ -35,6 +37,8 @@ interface ControlStub {
   getReviewIndex(id: string): Promise<{ repo: string; memoryKey: string; visitor: string } | null>
   getDiff(id: string): Promise<string | null>
   recordUsage(key: string, day: string, neurons: number): Promise<void>
+  reserveNeurons(day: string, key: string, amount: number, budget: number): Promise<boolean>
+  settleNeurons(key: string, actual: number): Promise<void>
   reserveChat(a: ReserveChatArgs): Promise<'ok' | 'daily' | 'review' | 'ip' | 'budget'>
   refundChat(a: { reviewId: string; day: string; ip: string | null }): Promise<void>
 }
@@ -66,7 +70,9 @@ function guard<T extends object>(stub: T): T {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 }
-const err = (status: number, message: string) => json({ error: message }, status)
+type ErrCode = 'static_only' | 'not_finished' | 'budget' | 'ip_limit' | 'review_limit' | 'expired'
+const err = (status: number, message: string, code?: ErrCode) => json(code ? { error: message, code } : { error: message }, status)
+const isNotFound = (e: unknown) => /not[ ._-]?found/i.test(e instanceof Error ? e.message : String(e))
 const busy = () => err(503, BUSY_MSG)
 
 const memoryFor = (env: Env, key: string) => guard(env.REPO_MEMORY.get(env.REPO_MEMORY.idFromName(key)) as unknown as MemoryStub)
@@ -189,33 +195,44 @@ async function createReview(req: Request, env: Env): Promise<Response> {
     neuronBudget: intVar(env.DAILY_NEURON_BUDGET, DEFAULT_NEURON_BUDGET),
     ip: isEval ? null : await ipHash(req),
     ipCap: intVar(env.IP_DAILY_REVIEWS, 4),
+    ipTotalCap: intVar(env.IP_DAILY_REVIEWS_TOTAL, 30),
   }
+  // Admitted on a cache hit without a slot: if the workflow later misses the cache it must not call the AI.
+  const cacheOnly = !isEval && !forceStaticOnly && !needsBudget
 
   // One atomic claim. A marker whose workflow died is released (slot refunded) and claimed again.
   let reviewId = ''
   let mode: ReviewMode = 'full'
   let notice: string | undefined
+  let noticeCode: 'budget' | 'ip_limit' | undefined
   for (let attempt = 0; ; attempt++) {
     if (attempt === 3) return busy()
     reviewId = crypto.randomUUID()
     let claim = await control.claimReview({ ...base, reviewId, needsBudget, forceStatic: forceStaticOnly })
     if (claim.kind === 'ip-limit') {
       notice = IP_REVIEW_NOTICE
+      noticeCode = 'ip_limit'
       claim = await control.claimReview({ ...base, reviewId, needsBudget: false, forceStatic: true })
     }
+    if (claim.kind === 'total-limit') return err(429, "You've reached today's review limit", 'ip_limit')
     if (claim.kind === 'claimed') {
       mode = claim.mode
+      if (mode === 'static-only' && !forceStaticOnly && !notice && needsBudget) {
+        notice = BUDGET_NOTICE
+        noticeCode = 'budget'
+      }
       break
     }
     if (claim.kind === 'existing') {
-      if (await stillRunning(env, control, memoryKey, claim.reviewId)) return json({ reviewId: claim.reviewId, repo, mode: claim.mode }, 202)
+      if (await stillRunning(env, control, memoryKey, claim)) return json({ reviewId: claim.reviewId, repo, mode: claim.mode }, 202)
       notice = undefined
+      noticeCode = undefined
       continue
     }
     return busy() // an ip-limit on the static-only retry cannot happen; fail safe
   }
 
-  const params: ReviewParams = { reviewId, repo, memoryKey, prNumber, title, diff, mode }
+  const params: ReviewParams = { reviewId, repo, memoryKey, prNumber, title, diff, mode, ...(cacheOnly ? { cacheOnly: true } : {}) }
   try {
     await infra(() => env.REVIEW_WORKFLOW.create({ id: reviewId, params }))
   } catch (e) {
@@ -226,28 +243,34 @@ async function createReview(req: Request, env: Env): Promise<Response> {
     }
     throw e
   }
-  return json({ reviewId, repo, mode, ...(notice ? { notice } : {}) }, 202)
+  return json({ reviewId, repo, mode, ...(notice ? { notice, noticeCode } : {}) }, 202)
 }
 
-/** True when an in-flight review is genuinely still running; otherwise its marker is cleared (and its slot refunded if it died). */
-async function stillRunning(env: Env, control: ControlStub, memoryKey: string, existingId: string): Promise<boolean> {
+/**
+ * True when an in-flight review is genuinely still running. A marker younger than GRACE_MS is alive without asking the Workflow
+ * (its create may still be in flight). Past that, only an explicit errored/terminated status or a not-found releases it (slot
+ * refunded); any other Workflow error is an InfraError (503) and releases nothing.
+ */
+async function stillRunning(env: Env, control: ControlStub, memoryKey: string, existing: { reviewId: string; ageMs: number }): Promise<boolean> {
   try {
-    if ((await memoryFor(env, memoryKey).getReview(existingId)) !== null) {
-      await control.clearInflight(existingId) // finished; keep its index so the link keeps working
+    if ((await memoryFor(env, memoryKey).getReview(existing.reviewId)) !== null) {
+      await control.clearInflight(existing.reviewId) // finished; keep its index so the link keeps working
       return false
     }
   } catch {
-    /* fall through to the workflow check */
+    /* fall through */
   }
-  let alive = false
+  if (existing.ageMs < GRACE_MS) return true
+  let status: string
   try {
-    const st = (await (await env.REVIEW_WORKFLOW.get(existingId)).status()) as { status: string }
-    alive = !['errored', 'terminated', 'unknown'].includes(st.status)
-  } catch {
-    alive = false
+    status = ((await (await env.REVIEW_WORKFLOW.get(existing.reviewId)).status()) as { status: string }).status
+  } catch (e) {
+    if (!isNotFound(e)) throw new InfraError(e)
+    status = 'unknown'
   }
-  if (!alive) await control.releaseReview(existingId, true)
-  return alive
+  const dead = ['errored', 'terminated', 'unknown'].includes(status)
+  if (dead) await control.releaseReview(existing.reviewId, true)
+  return !dead
 }
 
 type ReviewState = { state: 'complete'; result: unknown } | { state: 'running' } | { state: 'failed' } | { state: 'expired' }
@@ -259,8 +282,9 @@ async function reviewState(env: Env, id: string, memory: MemoryStub): Promise<Re
   let st: { status: string; output?: unknown }
   try {
     st = (await (await env.REVIEW_WORKFLOW.get(id)).status()) as { status: string; output?: unknown }
-  } catch {
-    return { state: 'expired' }
+  } catch (e) {
+    if (isNotFound(e)) return { state: 'expired' }
+    throw new InfraError(e)
   }
   if (st.status === 'complete' && st.output && typeof st.output === 'object') return { state: 'complete', result: st.output }
   if (st.status === 'unknown') return { state: 'expired' }
@@ -271,7 +295,7 @@ async function reviewState(env: Env, id: string, memory: MemoryStub): Promise<Re
 async function getReview(env: Env, id: string, memoryKey: string): Promise<Response> {
   const st = await reviewState(env, id, memoryFor(env, memoryKey))
   if (st.state === 'complete') return json({ status: 'complete', result: st.result })
-  if (st.state === 'expired') return err(410, EXPIRED_MSG)
+  if (st.state === 'expired') return err(410, EXPIRED_MSG, 'expired')
   if (st.state === 'failed') return json({ status: 'failed', error: FAILED_MSG })
   return json({ status: 'running' })
 }
@@ -304,10 +328,10 @@ async function reviewRoute(req: Request, env: Env, id: string, sub: string | und
     if (msg.length > 2000) return err(400, 'Messages are limited to 2,000 characters')
     if (await limited(env.CHAT_LIMITER, req)) return err(429, 'Too many messages — wait a minute and try again')
     const st = await reviewState(env, id, memory)
-    if (st.state === 'expired') return err(410, EXPIRED_MSG)
-    if (st.state !== 'complete') return err(409, st.state === 'failed' ? FAILED_MSG : 'The review is not finished yet')
+    if (st.state === 'expired') return err(410, EXPIRED_MSG, 'expired')
+    if (st.state !== 'complete') return err(409, st.state === 'failed' ? FAILED_MSG : 'The review is not finished yet', 'not_finished')
     const review = st.result as ReviewResult
-    if (review.mode === 'static-only') return err(409, 'Chat is unavailable for static-only reviews (the daily AI budget was used up when this ran)')
+    if (review.mode === 'static-only') return err(409, 'Chat is unavailable for static-only reviews (the daily AI budget was used up when this ran)', 'static_only')
     const day = today()
     const ip = await ipHash(req)
     const slot = await control.reserveChat({
@@ -319,9 +343,9 @@ async function reviewRoute(req: Request, env: Env, id: string, sub: string | und
       ipCap: intVar(env.IP_DAILY_CHATS, 15),
       neuronBudget: intVar(env.DAILY_NEURON_BUDGET, DEFAULT_NEURON_BUDGET),
     })
-    if (slot === 'daily' || slot === 'budget') return err(429, BUDGET_MSG)
-    if (slot === 'ip') return err(429, "You've reached today's chat limit")
-    if (slot === 'review') return err(429, `Chat limit reached for this review (${CHAT_TURNS_PER_REVIEW} questions)`)
+    if (slot === 'daily' || slot === 'budget') return err(429, BUDGET_MSG, 'budget')
+    if (slot === 'ip') return err(429, "You've reached today's chat limit", 'ip_limit')
+    if (slot === 'review') return err(429, `Chat limit reached for this review (${CHAT_TURNS_PER_REVIEW} questions)`, 'review_limit')
     const refund = async () => {
       try {
         await control.refundChat({ reviewId: id, day, ip })
@@ -332,21 +356,34 @@ async function reviewRoute(req: Request, env: Env, id: string, sub: string | und
     let history: ChatTurn[]
     let reply: string
     let neurons = 0
+    const nKey = `chat:${crypto.randomUUID()}`
+    const settle = async (actual: number) => {
+      try {
+        await control.settleNeurons(nKey, actual)
+      } catch {
+        // the (higher) reservation stays charged
+      }
+    }
     try {
       history = await memory.getChat(id, 10)
       const diff = (await control.getDiff(id)) ?? ''
-      reply = await answerChat(env.AI, review, history, msg, relevantCode(review, diff), (n) => (neurons = n))
+      // Reserve the worst case before the call; settle to actual usage after.
+      reply = await answerChat(
+        env.AI,
+        review,
+        history,
+        msg,
+        relevantCode(review, diff),
+        (n) => (neurons = n),
+        (amount) => control.reserveNeurons(day, nKey, amount, intVar(env.DAILY_NEURON_BUDGET, DEFAULT_NEURON_BUDGET)),
+      )
     } catch (e) {
       await refund()
+      await settle(0)
+      if (e instanceof LlmBudgetError) return err(429, BUDGET_MSG, 'budget')
       throw e
     }
-    if (neurons > 0) {
-      try {
-        await control.recordUsage(`chat:${crypto.randomUUID()}`, day, neurons)
-      } catch {
-        // accounting is best effort
-      }
-    }
+    await settle(neurons)
     if (reply === CHAT_FALLBACK) await refund() // the AI failed: the visitor did not get an answer, so no slot is spent
     const at = new Date().toISOString()
     const turns: ChatTurn[] = [

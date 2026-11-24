@@ -1,7 +1,7 @@
 import type { ChatTurn, ReviewResult } from './types'
 import { parseUnifiedDiff } from './diff'
 import { LLM_MODEL } from './checks/llm'
-import { promptChars, usageNeurons } from './budget'
+import { LlmBudgetError, promptChars, usageNeurons, worstCaseNeurons } from './budget'
 
 export const CHAT_SYSTEM_PROMPT = [
   'You are the assistant inside Standards Guardrail, a tool that reviewed a pull request against a short engineering standards catalog.',
@@ -15,6 +15,7 @@ export const CHAT_SYSTEM_PROMPT = [
 export const CHAT_FALLBACK = 'Sorry, I could not answer that right now. Please try again in a moment.'
 const MAX_CODE_BYTES = 6 * 1024
 const HISTORY_TURNS = 10
+const CHAT_MAX_TOKENS = 600
 
 /** Up to 6 KB of added lines from the files that have findings (or all files if none do). */
 export function relevantCode(review: ReviewResult, diff: string): string {
@@ -44,6 +45,7 @@ export async function answerChat(
   question: string,
   code = '',
   onUsage?: (neurons: number) => void,
+  reserve?: (worstCase: number) => Promise<boolean>,
 ): Promise<string> {
   const findings = review.findings
     .map((f) => `- ${f.ruleId} ${f.path}${f.line ? ':' + f.line : ''}: ${f.message}${f.suggestion ? ' Suggestion: ' + f.suggestion : ''}`)
@@ -61,8 +63,10 @@ export async function answerChat(
     ...history.slice(-HISTORY_TURNS).map((t) => ({ role: t.role, content: t.content })),
     { role: 'user', content: question },
   ]
+  // Reserved outside the try: a refusal must surface as LlmBudgetError, not as the fallback apology.
+  if (reserve && !(await reserve(worstCaseNeurons(promptChars(messages), CHAT_MAX_TOKENS)))) throw new LlmBudgetError('daily AI budget used')
   try {
-    const res: any = await (ai as any).run(LLM_MODEL, { messages, max_tokens: 600, temperature: 0.3 })
+    const res: any = await (ai as any).run(LLM_MODEL, { messages, max_tokens: CHAT_MAX_TOKENS, temperature: 0.3 })
     onUsage?.(usageNeurons(res, promptChars(messages)))
     const text = typeof res === 'string' ? res : res?.response
     return typeof text === 'string' && text.trim() ? text.trim().slice(0, 4000) : CHAT_FALLBACK

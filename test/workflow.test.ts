@@ -182,25 +182,77 @@ describe('runReview', () => {
     expect(control.clearInflight).toHaveBeenCalledWith('r1')
   })
 
-  it('records neuron usage per llm step, keyed reviewId:stepName, and survives a failing recorder', async () => {
-    const control = { clearInflight: vi.fn(async () => {}), recordUsage: vi.fn(async () => {}) }
-    const diff = diffOf(['src/a.ts', 'src/b.ts'])
-    await runReview(params(diff), { step: fakeStep(), ai: fakeAi().ai, cache: fakeKv() as any, memory: fakeMemory(), control })
-    const keys = control.recordUsage.mock.calls.map((c: any[]) => c[0]).sort()
-    expect(keys).toEqual(['r1:llm-check:0', 'r1:llm-check:1'])
-    const [, day, neurons] = control.recordUsage.mock.calls[0] as any[]
-    expect(day).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-    expect(neurons).toBeGreaterThan(0)
-    const broken = { clearInflight: vi.fn(async () => {}), recordUsage: vi.fn(async () => { throw new Error('do down') }) }
-    const r = await runReview(params(diff, { reviewId: 'r2' }), { step: fakeStep(), ai: fakeAi().ai, cache: fakeKv() as any, memory: fakeMemory(), control: broken })
-    expect(r.degradedFiles).toEqual([])
+  const budgetControl = (reserve = async (..._a: unknown[]) => true) => ({
+    clearInflight: vi.fn(async () => {}),
+    reserveNeurons: vi.fn(reserve),
+    settleNeurons: vi.fn(async (..._a: unknown[]) => {}),
   })
-  it('replayed llm steps are not re-run, so usage is not recorded twice', async () => {
-    const control = { clearInflight: vi.fn(async () => {}), recordUsage: vi.fn(async () => {}) }
+  it('reserves the worst case before each AI call and settles to actual usage, keyed reviewId:stepName', async () => {
+    const control = budgetControl()
+    const diff = diffOf(['src/a.ts', 'src/b.ts'])
+    const { ai } = fakeAi()
+    await runReview(params(diff), { step: fakeStep(), ai, cache: fakeKv() as any, memory: fakeMemory(), control, neuronBudget: 5000 })
+    const keys = control.reserveNeurons.mock.calls.map((c: any[]) => c[1]).sort()
+    expect(keys).toEqual(['r1:llm-check:0', 'r1:llm-check:1'])
+    const [day, , amount, budget] = control.reserveNeurons.mock.calls[0] as any[]
+    expect(day).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(amount).toBeGreaterThan(0)
+    expect(budget).toBe(5000)
+    expect(control.settleNeurons.mock.calls.map((c: any[]) => c[0]).sort()).toEqual(keys)
+    expect(control.settleNeurons.mock.calls[0][1]).toBeGreaterThan(0)
+    expect(control.reserveNeurons.mock.invocationCallOrder[0]).toBeLessThan((ai.run as any).mock.invocationCallOrder[0])
+  })
+  it('a refused reservation degrades the file with reason "budget", makes no AI call and is not cached', async () => {
+    const control = budgetControl(async () => false)
+    const kv = fakeKv()
+    const { ai } = fakeAi()
+    const r = await runReview(params(diffOf(['src/a.ts'])), { step: fakeStep(), ai, cache: kv as any, memory: fakeMemory(), control })
+    expect(ai.run).not.toHaveBeenCalled()
+    expect(r.degradedFiles).toEqual(['src/a.ts'])
+    expect(r.degradedReason).toBe('budget')
+    expect(kv.put).not.toHaveBeenCalled()
+    expect(r.mode).toBe('full')
+  })
+  it('eval-style runs (no slot, mode full) also go through the reservation', async () => {
+    const control = budgetControl(async () => false)
+    const r = await runReview(params(diffOf(['src/a.ts']), { repo: 'eval/x', memoryKey: 'eval/x#eval' }), { step: fakeStep(), ai: fakeAi().ai, cache: fakeKv() as any, memory: fakeMemory(), control })
+    expect(r.degradedReason).toBe('budget')
+  })
+  it('a failing reservation call is retried by the step, not swallowed into an AI call', async () => {
+    let n = 0
+    const control = budgetControl(async () => {
+      if (n++ === 0) throw new Error('do down')
+      return true
+    })
+    const { ai } = fakeAi()
+    const r = await runReview(params(diffOf(['src/a.ts'])), { step: fakeStep(), ai, cache: fakeKv() as any, memory: fakeMemory(), control })
+    expect(r.degradedFiles).toEqual([])
+    expect((ai.run as any).mock.calls).toHaveLength(1)
+  })
+  it('replayed llm steps are not re-run, so nothing is reserved twice', async () => {
+    const control = budgetControl()
     const replay = new Map<string, unknown>()
     const diff = diffOf(['src/a.ts'])
     for (let i = 0; i < 2; i++) await runReview(params(diff), { step: fakeStep([], replay), ai: fakeAi().ai, cache: fakeKv() as any, memory: fakeMemory(), control })
-    expect(control.recordUsage).toHaveBeenCalledTimes(1)
+    expect(control.reserveNeurons).toHaveBeenCalledTimes(1)
+  })
+  it('a review admitted on a cache hit (no slot) that misses the cache at run time goes static-only', async () => {
+    const { ai } = fakeAi()
+    const kv = fakeKv()
+    const r = await runReview(params(diffOf(['src/a.ts']), { cacheOnly: true }), { step: fakeStep(), ai, cache: kv as any, memory: fakeMemory() })
+    expect(ai.run).not.toHaveBeenCalled()
+    expect(r.mode).toBe('static-only')
+    expect(kv.put).not.toHaveBeenCalled()
+  })
+  it('cacheOnly with a real cache hit still serves the cached full result', async () => {
+    const diff = diffOf(['src/a.ts'])
+    const kv = fakeKv()
+    await runReview(params(diff), { step: fakeStep(), ai: fakeAi().ai, cache: kv as any, memory: fakeMemory() })
+    const { ai } = fakeAi()
+    const r = await runReview(params(diff, { reviewId: 'r2', cacheOnly: true }), { step: fakeStep(), ai, cache: kv as any, memory: fakeMemory() })
+    expect(r.cached).toBe(true)
+    expect(r.mode).toBe('full')
+    expect(ai.run).not.toHaveBeenCalled()
   })
 
   it('a deleted test file does not satisfy STD-004', async () => {

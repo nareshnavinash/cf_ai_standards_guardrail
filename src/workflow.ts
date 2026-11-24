@@ -5,6 +5,7 @@ import { RULES, RULES_VERSION } from './rules'
 import { limitFiles, parseUnifiedDiff } from './diff'
 import { isTestPath, runStaticChecks, type PathInfo } from './checks/static'
 import { LlmParseError, checkFileWithLlm } from './checks/llm'
+import { DEFAULT_NEURON_BUDGET, LlmBudgetError } from './budget'
 import { applyExceptions, cacheKey, dedupeFindings, readCachedReview, sortFindings, type CachedReview } from './review'
 
 export interface StepLike {
@@ -19,7 +20,13 @@ export interface ReviewDeps {
   ai: Ai
   cache: KVNamespace
   memory: MemoryLike
-  control?: { clearInflight(reviewId: string): Promise<void>; recordUsage?(key: string, day: string, neurons: number): Promise<void> }
+  control?: {
+    clearInflight(reviewId: string): Promise<void>
+    reserveNeurons?(day: string, key: string, amount: number, budget: number): Promise<boolean>
+    settleNeurons?(key: string, actual: number): Promise<void>
+  }
+  /** Daily neuron budget for per-call reservations (default 9000). */
+  neuronBudget?: number
 }
 
 const BATCH = 4
@@ -53,6 +60,8 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
 
   let raw: Finding[]
   let degradedFiles: string[] = []
+  let budgetHit = false
+  let runMode: ReviewMode = params.mode
   let info = meta
   const cached = cachedHit !== null
 
@@ -60,12 +69,14 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
     raw = cachedHit.findings
     info = { filesReviewed: cachedHit.filesReviewed, skippedFiles: cachedHit.skippedFiles, truncated: cachedHit.truncated }
   } else {
+    // Admitted on a cache hit (no budget slot) but the cache missed now: never spend AI without a slot.
+    if (params.cacheOnly) runMode = 'static-only'
     const staticFindings = await step.do('static-checks', async () => {
       const m = load()
       return runStaticChecks(m.files, m.allPaths)
     })
     const llmFindings: Finding[] = []
-    if (params.mode === 'full') {
+    if (runMode === 'full') {
       const files = load().files
       // Test files are only checked by the static rules (no LLM spend, no STD-005..007 noise).
       const idxs = files.map((_, i) => i).filter((i) => !isTestPath(files[i].path))
@@ -76,39 +87,47 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
             try {
               // Transport errors throw (and are retried by Workflows); an unparseable reply degrades without a retry.
               const stepName = 'llm-check:' + i
+              const key = `${params.reviewId}:${stepName}`
               const out = await step.do(stepName, LLM_STEP, async () => {
                 let neurons = 0
+                // Reserve the worst case before the call (idempotent per key, so retries do not double charge); refused means no AI call.
+                const reserve = async (amount: number) =>
+                  deps.control?.reserveNeurons
+                    ? deps.control.reserveNeurons(new Date().toISOString().slice(0, 10), key, amount, deps.neuronBudget ?? DEFAULT_NEURON_BUDGET)
+                    : true
                 try {
-                  return { findings: await checkFileWithLlm(ai, load().files[i], RULES, (n) => (neurons = n)), degraded: false }
+                  return { findings: await checkFileWithLlm(ai, load().files[i], RULES, (n) => (neurons = n), reserve), degraded: false, budget: false }
                 } catch (e) {
-                  if (e instanceof LlmParseError) return { findings: [] as Finding[], degraded: true }
+                  if (e instanceof LlmParseError) return { findings: [] as Finding[], degraded: true, budget: false }
+                  if (e instanceof LlmBudgetError) return { findings: [] as Finding[], degraded: true, budget: true }
                   throw e
                 } finally {
-                  // Idempotent per reviewId:stepName in Control, so retries and replays never double count.
+                  // Settle the reservation to the real usage; a failure leaves the (higher) reservation charged.
                   if (neurons > 0) {
                     try {
-                      await deps.control?.recordUsage?.(`${params.reviewId}:${stepName}`, new Date().toISOString().slice(0, 10), neurons)
+                      await deps.control?.settleNeurons?.(key, neurons)
                     } catch {
                       // accounting is best effort; the review itself must not fail
                     }
                   }
                 }
               })
-              return { found: out.findings, degraded: out.degraded, path: files[i].path }
+              return { found: out.findings, degraded: out.degraded, budget: out.budget, path: files[i].path }
             } catch {
-              return { found: [] as Finding[], degraded: true, path: files[i].path }
+              return { found: [] as Finding[], degraded: true, budget: false, path: files[i].path }
             }
           }),
         )
         for (const r of results) {
           llmFindings.push(...r.found)
           if (r.degraded) degradedFiles.push(r.path)
+          if (r.budget) budgetHit = true
         }
       }
     }
     raw = sortFindings(dedupeFindings([...staticFindings, ...llmFindings]))
 
-    if (params.mode === 'full' && degradedFiles.length === 0) {
+    if (runMode === 'full' && degradedFiles.length === 0) {
       await step.do('cache-store', async () => {
         const body: CachedReview = { findings: raw, ...info }
         try {
@@ -126,7 +145,7 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
     return applyExceptions(raw, exceptions)
   })
 
-  const mode: ReviewMode = cached ? 'full' : params.mode
+  const mode: ReviewMode = cached ? 'full' : runMode
   return step.do('persist', async () => {
     const result: ReviewResult = {
       id: params.reviewId,
@@ -139,6 +158,7 @@ export async function runReview(params: ReviewParams, deps: ReviewDeps): Promise
       filesReviewed: info.filesReviewed,
       skippedFiles: info.skippedFiles,
       degradedFiles,
+      ...(budgetHit ? { degradedReason: 'budget' as const } : {}),
       truncated: info.truncated,
       rulesVersion: RULES_VERSION,
       cached,
@@ -163,6 +183,7 @@ export class ReviewWorkflow extends WorkflowEntrypoint<Env, ReviewParams> {
       ai: this.env.AI,
       cache: this.env.CACHE,
       memory: memory as unknown as MemoryLike,
+      neuronBudget: parseInt(this.env.DAILY_NEURON_BUDGET ?? '', 10) || DEFAULT_NEURON_BUDGET,
       control: this.env.CONTROL.get(this.env.CONTROL.idFromName('global')) as unknown as NonNullable<ReviewDeps['control']>,
     })
   }

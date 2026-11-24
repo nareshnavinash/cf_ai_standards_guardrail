@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { NEURONS_PER_M_INPUT, NEURONS_PER_M_OUTPUT, neuronsFor, usageNeurons } from '../src/budget'
+import { NEURONS_PER_M_INPUT, NEURONS_PER_M_OUTPUT, neuronsFor, usageNeurons, worstCaseNeurons } from '../src/budget'
 
 describe('neuron accounting', () => {
   it('converts tokens with the per-million constants', () => {
@@ -16,5 +16,8 @@ describe('neuron accounting', () => {
     expect(usageNeurons('b'.repeat(40), 40)).toBeCloseTo(neuronsFor(10, 10))
     expect(usageNeurons({ response: { findings: [] } }, 0)).toBeGreaterThan(0)
     expect(usageNeurons(null, 0)).toBe(0)
+  })
+  it('worst case = prompt chars/4 at the input rate + max_tokens at the output rate', () => {
+    expect(worstCaseNeurons(4000, 1024)).toBeCloseTo(neuronsFor(1000, 1024))
   })
 })

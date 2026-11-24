@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { CHAT_FALLBACK, answerChat } from '../src/chat'
+import { LlmBudgetError } from '../src/budget'
 import type { ReviewResult } from '../src/types'
 
 const review = (title: string): ReviewResult => ({
@@ -36,5 +37,15 @@ describe('answerChat prompt hygiene', () => {
     })
     expect(await answerChat({ run } as any, review('t'), [], 'hi', '', (n) => seen.push(n))).toBe(CHAT_FALLBACK)
     expect(seen).toEqual([])
+  })
+  it('reserves before calling the model; a refused reservation throws LlmBudgetError without calling it', async () => {
+    const run = vi.fn(async () => ({ response: 'ok' }))
+    const reserve = vi.fn(async (_n: number) => true)
+    await answerChat({ run } as any, review('t'), [], 'hi', '', undefined, reserve)
+    expect(reserve.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[0])
+    expect(reserve.mock.calls[0][0]).toBeGreaterThan(0)
+    const run2 = vi.fn(async () => ({ response: 'ok' }))
+    await expect(answerChat({ run: run2 } as any, review('t'), [], 'hi', '', undefined, async () => false)).rejects.toBeInstanceOf(LlmBudgetError)
+    expect(run2).not.toHaveBeenCalled()
   })
 })

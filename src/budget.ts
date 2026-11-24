@@ -10,6 +10,12 @@ export const DEFAULT_NEURON_BUDGET = 9000
 export const neuronsFor = (promptTokens: number, completionTokens: number): number =>
   (promptTokens * NEURONS_PER_M_INPUT + completionTokens * NEURONS_PER_M_OUTPUT) / 1_000_000
 
+/** Thrown when the daily neuron budget cannot cover the next AI call; the call is not made. */
+export class LlmBudgetError extends Error {}
+
+/** Upper bound for one call, reserved before it is made: prompt tokens (chars/4) at the input rate plus all of max_tokens at the output rate. */
+export const worstCaseNeurons = (promptCharCount: number, maxTokens: number): number => neuronsFor(Math.ceil(promptCharCount / 4), maxTokens)
+
 const chars = (v: unknown): number => (typeof v === 'string' ? v.length : v == null ? 0 : JSON.stringify(v).length)
 
 /**
